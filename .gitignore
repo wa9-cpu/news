@@ -8,3 +8,6 @@ build/
 frontend/node_modules/
 frontend/.next/
 backend/src/*.egg-info/
+*.log
+*-dev.err.log
+*-dev.out.log

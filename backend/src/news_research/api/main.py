@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
 
 from news_research.agents.image.agent import ImageAgent
 from news_research.clients.nanobanana_client import NanoBananaClient
@@ -24,6 +25,20 @@ image_agent = ImageAgent(NanoBananaClient(settings.nanobanana_api_key, settings.
 orchestrator = CrewOrchestrator(image_agent=image_agent)
 
 app = FastAPI(title="Multi-Agent Research API", version="0.2.0")
+
+# Browser clients call this API from a separate origin (frontend app), so CORS must be explicit.
+allowed_origins = [
+    settings.frontend_base_url,
+    "http://localhost:3000",
+    "http://127.0.0.1:3000",
+]
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=allowed_origins,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 
 @app.get("/health")

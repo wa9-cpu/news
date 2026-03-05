@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from urllib.parse import urlparse
 
 from news_research.agents.deep_research.models import RawCollectedItem
 from news_research.agents.source_validation.agent import ValidatedSource
@@ -48,27 +49,29 @@ class FactualSummaryAgent:
         by_item = {item.item_id: item for item in raw_items}
         facts: list[Fact] = []
 
-        for idx, src in enumerate(validated_sources[:5], start=1):
+        for idx, src in enumerate(validated_sources[:6], start=1):
             raw = by_item.get(src.item_id)
             if not raw:
                 continue
-            statement = (
-                f"Source {src.source_id} reports content relevant to '{query}' at {src.url}."
-                if not full_article
-                else f"According to {src.source_id}, the source at {src.url} provides detailed material relevant to '{query}'."
-            )
+
+            domain = urlparse(src.url).netloc or "unknown-source"
+            title = raw.title or "Untitled source item"
+            excerpt = self._excerpt(raw.raw_text)
+            date_text = raw.published_at or "date unavailable"
+
+            if full_article:
+                statement = (
+                    f"{src.source_id} from {domain} lists title '{title}' and publication time '{date_text}'. "
+                    f"Source excerpt: {excerpt}"
+                )
+            else:
+                statement = (
+                    f"{src.source_id}: '{title}' ({domain}, published {date_text}). "
+                    f"Excerpt: {excerpt}"
+                )
             facts.append(Fact(fact_id=f"fact_{idx:03d}", statement=statement, source_refs=[src.source_id]))
 
-        conflicts: list[Conflict] = []
-        platforms = {src.platform for src in validated_sources}
-        if len(platforms) > 1:
-            conflicts.append(
-                Conflict(
-                    conflict_id="conflict_001",
-                    description="Sources come from different platforms and may present differing narratives.",
-                    source_refs=[s.source_id for s in validated_sources[:3]],
-                )
-            )
+        conflicts = self._detect_conflicts(validated_sources, by_item)
 
         gaps: list[Gap] = []
         if len(validated_sources) < 2:
@@ -76,6 +79,13 @@ class FactualSummaryAgent:
                 Gap(
                     question_or_gap="Independent corroboration",
                     reason="Fewer than two validated sources available.",
+                )
+            )
+        if not facts:
+            gaps.append(
+                Gap(
+                    question_or_gap="Source evidence",
+                    reason=f"No fact statements could be generated for query '{query}'.",
                 )
             )
 
@@ -90,3 +100,39 @@ class FactualSummaryAgent:
                 "source_refs": sorted({r for f in summary.facts for r in f.source_refs}),
             }
         ]
+
+    @staticmethod
+    def _excerpt(text: str, limit: int = 180) -> str:
+        cleaned = " ".join((text or "").split())
+        if len(cleaned) <= limit:
+            return cleaned
+        return cleaned[: limit - 3].rstrip() + "..."
+
+    @staticmethod
+    def _detect_conflicts(
+        validated_sources: list[ValidatedSource],
+        by_item: dict[str, RawCollectedItem],
+    ) -> list[Conflict]:
+        by_domain: dict[str, set[str]] = {}
+        for src in validated_sources[:8]:
+            raw = by_item.get(src.item_id)
+            if not raw:
+                continue
+            domain = urlparse(src.url).netloc or "unknown-source"
+            by_domain.setdefault(domain, set()).add((raw.title or "").strip())
+
+        conflicts: list[Conflict] = []
+        for domain, titles in by_domain.items():
+            non_empty_titles = {t for t in titles if t}
+            if len(non_empty_titles) > 1:
+                refs = [s.source_id for s in validated_sources if (urlparse(s.url).netloc or "unknown-source") == domain][:3]
+                conflicts.append(
+                    Conflict(
+                        conflict_id=f"conflict_{len(conflicts)+1:03d}",
+                        description=(
+                            f"Multiple differing titles were observed from {domain}; review source-level claims before drawing conclusions."
+                        ),
+                        source_refs=refs,
+                    )
+                )
+        return conflicts

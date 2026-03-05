@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from urllib.parse import quote_plus
+from html import escape
+from urllib.parse import quote
 
 from news_research.agents.headline.agent import HeadlineCandidate
 from news_research.clients.nanobanana_client import NanoBananaClient
@@ -45,4 +46,13 @@ class ImageAgent:
 
     @staticmethod
     def _fallback_url(headline: str) -> str:
-        return f"https://placehold.co/640x360?text={quote_plus(headline)}"
+        # Self-contained SVG placeholder avoids dependency on external image hosts.
+        text = escape(headline[:80])
+        svg = (
+            "<svg xmlns='http://www.w3.org/2000/svg' width='640' height='360' viewBox='0 0 640 360'>"
+            "<rect width='640' height='360' fill='#e6e6e6'/>"
+            "<rect x='16' y='16' width='608' height='328' fill='none' stroke='#b0b0b0'/>"
+            f"<text x='32' y='185' font-size='22' fill='#333' font-family='Arial, sans-serif'>{text}</text>"
+            "</svg>"
+        )
+        return f"data:image/svg+xml;utf8,{quote(svg)}"

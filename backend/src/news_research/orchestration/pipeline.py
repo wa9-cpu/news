@@ -4,7 +4,11 @@ from __future__ import annotations
 
 from dataclasses import asdict
 
-from news_research.agents.deep_research.adapters import MockWebAdapter
+from news_research.agents.deep_research.adapters import (
+    GoogleNewsRSSAdapter,
+    MockWebAdapter,
+    RedditPublicAdapter,
+)
 from news_research.agents.deep_research.agent import DeepResearchAgent
 from news_research.agents.deep_research.models import (
     CollectionLimits,
@@ -35,7 +39,14 @@ class CrewOrchestrator:
     """Orchestrates role-separated agents in fixed execution order."""
 
     def __init__(self, image_agent: ImageAgent):
-        self._deep = DeepResearchAgent(adapters={"web": MockWebAdapter(), "news": MockWebAdapter(), "blog": MockWebAdapter(), "social": MockWebAdapter()})
+        self._deep = DeepResearchAgent(
+            adapters={
+                "web": MockWebAdapter(),
+                "news": GoogleNewsRSSAdapter(),
+                "blog": GoogleNewsRSSAdapter(extra_terms="blog"),
+                "social": RedditPublicAdapter(),
+            }
+        )
         self._validate = SourceValidationAgent()
         self._summary = FactualSummaryAgent()
         self._headline = HeadlineAgent()
@@ -75,7 +86,7 @@ class CrewOrchestrator:
         stages[-1] = {"stage": "summary", "status": "success" if summary.facts else "partial_success"}
 
         stages.append({"stage": "headline", "status": "in_progress"})
-        headlines = self._headline.execute(query, summary, validated)
+        headlines = self._headline.execute(query, summary, validated, deep_resp.collected_items)
         stages[-1] = {"stage": "headline", "status": "success" if headlines else "failure"}
 
         stages.append({"stage": "image", "status": "in_progress"})
@@ -90,7 +101,7 @@ class CrewOrchestrator:
                     card_id=f"card_{idx:03d}",
                     headline_id=h.headline_id,
                     headline=h.text,
-                    image=ImageItem(url=image_by_headline.get(h.headline_id, "https://placehold.co/640x360")),
+                    image=ImageItem(url=image_by_headline.get(h.headline_id, "")),
                     source_refs=h.source_refs,
                 )
             )
@@ -129,9 +140,20 @@ class CrewOrchestrator:
         }
         return result, stages, raw
 
-    def generate_article(self, request_id: str, card_id: str, headline_id: str, headline: str, source_refs: list[str], summary_payload: SummaryPayload, image_url: str | None) -> ArticlePayload:
+    def generate_article(
+        self,
+        request_id: str,
+        card_id: str,
+        headline_id: str,
+        headline: str,
+        source_refs: list[str],
+        summary_payload: SummaryPayload,
+        image_url: str | None,
+    ) -> ArticlePayload:
         facts = summary_payload.facts
-        content = " ".join(f.statement for f in facts if set(f.source_refs) & set(source_refs)) or "Insufficient source-backed details available."
+        content = " ".join(
+            f.statement for f in facts if set(f.source_refs) & set(source_refs)
+        ) or "Insufficient source-backed details available."
 
         return ArticlePayload(
             article_id=new_id("article"),

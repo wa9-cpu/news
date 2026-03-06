@@ -1,0 +1,24 @@
+{
+  "name": "deep-factual-research-backend",
+  "version": "1.0.0",
+  "description": "Multi-agent factual research backend with full article extraction",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node server.js"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "dependencies": {
+    "@mozilla/readability": "^0.5.0",
+    "axios": "^1.8.4",
+    "cheerio": "^1.0.0",
+    "cors": "^2.8.5",
+    "express": "^4.21.2",
+    "helmet": "^8.0.0",
+    "jsdom": "^26.0.0",
+    "lru-cache": "^11.0.2",
+    "morgan": "^1.10.0"
+  }
+}

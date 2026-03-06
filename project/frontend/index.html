@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Deep Factual Research</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <header class="topbar">
+      <h1>Deep Factual Research</h1>
+      <p>Enter a topic to generate a multi-paragraph master summary from full article text.</p>
+      <form id="search-form" class="search-form">
+        <input id="query-input" type="text" placeholder="Search a topic" required />
+        <button id="search-btn" type="submit">Research</button>
+      </form>
+      <div id="status-line" class="status-line"></div>
+      <button id="sources-toggle" class="sources-toggle" type="button">SOURCES</button>
+    </header>
+
+    <main class="container">
+      <section id="summary-section" class="panel hidden">
+        <h2>Master Summary</h2>
+        <div id="summary-content"></div>
+        <div id="meta-content" class="meta-content"></div>
+      </section>
+
+      <section id="explore-section" class="panel hidden">
+        <h2>Explore More</h2>
+        <div id="explore-grid" class="explore-grid"></div>
+      </section>
+    </main>
+
+    <aside id="sources-sidebar" class="sources-sidebar" aria-hidden="true">
+      <div class="sources-header">
+        <h3>Sources</h3>
+        <button id="sources-close" type="button">Close</button>
+      </div>
+      <ul id="sources-list" class="sources-list"></ul>
+    </aside>
+
+    <div id="overlay" class="overlay hidden"></div>
+
+    <script src="script.js"></script>
+  </body>
+</html>

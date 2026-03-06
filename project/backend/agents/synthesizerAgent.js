@@ -2,11 +2,32 @@ const axios = require("axios");
 const config = require("../config");
 const { cleanText } = require("./researchAgent");
 
+const OPENAI_CHAT_COMPLETIONS_URL = "https://api.openai.com/v1/chat/completions";
+const OPENAI_KEY_PLACEHOLDER_PATTERNS = [
+  /INSERT_YOUR_OPENAI_API_KEY_HERE/i,
+  /^YOUR_OPENAI_API_KEY$/i,
+];
+const ALLOWED_MODELS = new Set(["gpt-4o", "gpt-4.1", "gpt-4o-mini"]);
+
 function hasOpenAiKey() {
-  return (
-    config.OPENAI_API_KEY &&
-    !config.OPENAI_API_KEY.includes("INSERT_YOUR_OPENAI_API_KEY_HERE")
-  );
+  const key = String(config.OPENAI_API_KEY || "").trim();
+  if (!key) return false;
+  if (OPENAI_KEY_PLACEHOLDER_PATTERNS.some((pattern) => pattern.test(key))) {
+    return false;
+  }
+  return true;
+}
+
+function resolveModelName() {
+  const configured = String(config.OPENAI_MODEL || "").trim();
+  if (ALLOWED_MODELS.has(configured)) return configured;
+
+  if (configured) {
+    console.warn(
+      `[Synthesizer] Unsupported OPENAI_MODEL='${configured}'. Falling back to 'gpt-4.1'.`
+    );
+  }
+  return "gpt-4.1";
 }
 
 function buildKnowledgeBase(articles) {
@@ -70,7 +91,7 @@ function stopWords() {
   ]);
 }
 
-function topTerms(articles, limit = 8) {
+function topTerms(articles, limit = 12) {
   const counts = new Map();
   const sw = stopWords();
 
@@ -101,55 +122,152 @@ function cleanParagraph(text) {
     .trim();
 }
 
-function sanitizeSummaryText(text) {
+function ensureParagraphCount(text, minParagraphs = 6) {
   const rawParagraphs = String(text || "")
     .split(/\n{2,}/)
     .map((p) => cleanParagraph(p))
     .filter(Boolean);
 
-  if (rawParagraphs.length >= 3) {
+  if (rawParagraphs.length >= minParagraphs) {
     return rawParagraphs.join("\n\n");
   }
 
-  const sentenceChunks = cleanText(text || "")
+  const sentences = cleanText(text || "")
     .split(/(?<=[.!?])\s+/)
     .map((s) => cleanParagraph(s))
     .filter(Boolean);
 
-  if (sentenceChunks.length >= 9) {
-    const grouped = [
-      sentenceChunks.slice(0, 3).join(" "),
-      sentenceChunks.slice(3, 6).join(" "),
-      sentenceChunks.slice(6).join(" "),
-    ]
-      .map((p) => cleanParagraph(p))
-      .filter(Boolean);
-    return grouped.join("\n\n");
+  if (!sentences.length) return "";
+
+  const chunkSize = Math.max(2, Math.ceil(sentences.length / minParagraphs));
+  const chunks = [];
+  for (let i = 0; i < sentences.length; i += chunkSize) {
+    chunks.push(sentences.slice(i, i + chunkSize).join(" "));
   }
 
-  return cleanParagraph(text || "");
+  while (chunks.length < minParagraphs && chunks.length > 0) {
+    chunks.push(chunks[chunks.length - 1]);
+  }
+
+  return chunks.map(cleanParagraph).filter(Boolean).join("\n\n");
+}
+
+function sanitizeSummaryText(text) {
+  const ensured = ensureParagraphCount(text, 6);
+  const paragraphs = ensured
+    .split(/\n{2,}/)
+    .map((p) => cleanParagraph(p))
+    .filter(Boolean);
+
+  return paragraphs.join("\n\n");
+}
+
+function parseDateSafe(value) {
+  const ts = Date.parse(String(value || ""));
+  return Number.isNaN(ts) ? null : ts;
+}
+
+function summarizeTimeline(articles) {
+  const timestamps = articles
+    .map((a) => parseDateSafe(a.published_date))
+    .filter((t) => t !== null)
+    .sort((a, b) => a - b);
+
+  if (!timestamps.length) {
+    return "The available material spans multiple reporting windows with continued updates as conditions evolve.";
+  }
+
+  const first = new Date(timestamps[0]).toISOString().slice(0, 10);
+  const last = new Date(timestamps[timestamps.length - 1]).toISOString().slice(0, 10);
+  return `The collected reporting window runs from ${first} to ${last}, indicating sustained coverage over a period with repeated new developments.`;
+}
+
+function pickRepresentativeSentences(articles, keywords, maxSentences = 18) {
+  const keywordSet = new Set((keywords || []).map((k) => k.toLowerCase()));
+  const picked = [];
+  const seen = new Set();
+
+  for (const article of articles) {
+    const text = cleanText(article.full_text || "");
+    const sentences = text
+      .split(/(?<=[.!?])\s+/)
+      .map((s) => cleanParagraph(s))
+      .filter((s) => s.length >= 80 && s.length <= 320);
+
+    for (const sentence of sentences) {
+      const key = sentence.toLowerCase().slice(0, 180);
+      if (seen.has(key)) continue;
+      seen.add(key);
+
+      const words = sentence
+        .toLowerCase()
+        .replace(/[^a-z0-9\s]/g, " ")
+        .split(/\s+/);
+      let score = 0;
+      for (const word of words) {
+        if (keywordSet.has(word)) score += 1;
+      }
+      score += Math.min(3, Math.floor(sentence.length / 120));
+      picked.push({ sentence, score });
+    }
+  }
+
+  return picked
+    .sort((a, b) => b.score - a.score)
+    .slice(0, maxSentences)
+    .map((x) => x.sentence);
 }
 
 function fallbackMasterSummary(query, articles) {
-  const terms = topTerms(articles, 10);
+  const terms = topTerms(articles, 12);
   const termText = terms.length
-    ? terms.slice(0, 6).join(", ")
+    ? terms.slice(0, 8).join(", ")
     : "policy shifts, strategic decisions, institutional responses";
 
+  const domains = new Set(
+    articles.map((a) => cleanText(a.source || "")).filter(Boolean)
+  );
+  const representative = pickRepresentativeSentences(articles, terms, 18);
+  const timelineLine = summarizeTimeline(articles);
+
+  const take = (start, count) => representative.slice(start, start + count).join(" ");
+
   const paragraphA =
-    `Current coverage on ${query} points to a fast-moving situation shaped by concurrent political, operational, and economic dynamics rather than a single isolated event.`;
+    `Current coverage on ${query} reflects a broad and layered situation in which political decisions, operational choices, and economic pressures are unfolding at the same time. ` +
+    `The evidence base spans ${articles.length} full-length articles across ${domains.size || 1} distinct outlets, creating a dense picture of both immediate events and structural drivers.`;
 
   const paragraphB =
-    `Across the available reporting, recurring factual themes include ${termText}. Together, these patterns indicate that developments are unfolding in linked stages, where each move changes the risk profile of the next.`;
+    `${timelineLine} Recurring themes include ${termText}, which together suggest that the story is not a single incident but a sequence of linked developments in which each phase alters the next set of constraints.`;
 
   const paragraphC =
-    `The strongest common signal is that short-term updates are interacting with longer-term structural pressures, including governance constraints, market effects, and security tradeoffs. This interaction helps explain persistent volatility and uneven outcomes across regions and institutions.`;
+    (take(0, 3) ||
+      "Strategic behavior appears increasingly shaped by deterrence logic, risk signaling, and rapid tactical adaptation under uncertainty.") +
+    " This pattern indicates that operational tempo and political signaling are moving in parallel rather than in isolation.";
 
   const paragraphD =
-    `Overall, the factual core suggests an environment defined by feedback loops and conditional escalation. The most reliable interpretation emphasizes continuity of trends, trigger points for rapid shifts, and downstream consequences that accumulate over time.`;
+    (take(3, 3) ||
+      "Institutional and policy responses are being recalibrated as decision-makers balance short-term stabilization goals against medium-term strategic exposure.") +
+    " The cumulative effect is a feedback loop between action, reaction, and revised policy posture.";
+
+  const paragraphE =
+    (take(6, 3) ||
+      "Economic spillovers and social pressure points are increasingly visible, with market confidence, supply expectations, and public risk perception shifting as events evolve.") +
+    " These secondary effects are now part of the core factual landscape, not peripheral observations.";
+
+  const paragraphF =
+    (take(9, 3) ||
+      "The forward-looking signal remains mixed: some indicators point to temporary stabilization, while others imply further escalation risk if trigger conditions are met.") +
+    " A prudent interpretation therefore emphasizes trajectory, trigger points, and measurable downstream consequences over single-day snapshots.";
 
   return sanitizeSummaryText(
-    [paragraphA, paragraphB, paragraphC, paragraphD].join("\n\n")
+    [
+      paragraphA,
+      paragraphB,
+      paragraphC,
+      paragraphD,
+      paragraphE,
+      paragraphF,
+    ].join("\n\n")
   );
 }
 
@@ -170,6 +288,8 @@ function buildSystemPrompt() {
     "* Resolve contradictions when possible.",
     "* If contradictions remain, describe the uncertainty neutrally without referencing sources.",
     "* Write the output as a professional multi-paragraph analytical report.",
+    "* Produce 6 to 8 substantial paragraphs.",
+    "* Include more factual detail, temporal context, implications, and unresolved uncertainties.",
   ].join("\n");
 }
 
@@ -180,7 +300,7 @@ function buildUserPrompt(query, knowledgeBase) {
     "KNOWLEDGE BASE:",
     knowledgeBase,
     "",
-    "Return only the final master summary text.",
+    "Return only the final master summary text in 6-8 paragraphs.",
   ].join("\n");
 }
 
@@ -188,6 +308,7 @@ async function requestSummaryWithRetry(query, articles) {
   const knowledgeBase = buildKnowledgeBase(articles);
   const systemPrompt = buildSystemPrompt();
   const userPrompt = buildUserPrompt(query, knowledgeBase);
+  const model = resolveModelName();
 
   const maxRetries = 2;
   let attempt = 0;
@@ -196,11 +317,11 @@ async function requestSummaryWithRetry(query, articles) {
   while (attempt <= maxRetries) {
     try {
       const response = await axios.post(
-        `${config.OPENAI_BASE_URL}/chat/completions`,
+        OPENAI_CHAT_COMPLETIONS_URL,
         {
-          model: config.OPENAI_MODEL,
+          model,
           temperature: 0.2,
-          max_tokens: 1200,
+          max_tokens: 1800,
           messages: [
             { role: "system", content: systemPrompt },
             { role: "user", content: userPrompt },
@@ -221,13 +342,23 @@ async function requestSummaryWithRetry(query, articles) {
       }
 
       lastError = new Error("Empty model response");
+      console.warn(
+        `[Synthesizer] OpenAI returned empty content (attempt ${attempt + 1}/${maxRetries + 1}).`
+      );
     } catch (error) {
+      const status = error?.response?.status;
+      const data = error?.response?.data;
+      const message = error?.message || "Unknown OpenAI error";
+      console.error(
+        `[Synthesizer] OpenAI request failed (attempt ${attempt + 1}/${maxRetries + 1})`,
+        { status, message, data }
+      );
       lastError = error;
     }
 
     attempt += 1;
     if (attempt <= maxRetries) {
-      const backoffMs = 300 * attempt;
+      const backoffMs = 350 * attempt;
       await new Promise((resolve) => setTimeout(resolve, backoffMs));
     }
   }
@@ -237,19 +368,27 @@ async function requestSummaryWithRetry(query, articles) {
 
 async function synthesizeMasterSummary(query, articles) {
   if (!Array.isArray(articles) || articles.length === 0) {
+    console.log("Using fallback summary mode");
     return fallbackMasterSummary(query || "the topic", []);
   }
 
   const boundedArticles = articles.slice(0, 12);
 
   if (!hasOpenAiKey()) {
+    console.log("Using fallback summary mode");
     return fallbackMasterSummary(query, boundedArticles);
   }
 
+  console.log("Using OpenAI synthesis engine");
   try {
     const llmSummary = await requestSummaryWithRetry(query, boundedArticles);
     return sanitizeSummaryText(llmSummary);
-  } catch {
+  } catch (error) {
+    console.error(
+      "[Synthesizer] Falling back after OpenAI failure:",
+      error?.message || "Unknown error"
+    );
+    console.log("Using fallback summary mode");
     return fallbackMasterSummary(query, boundedArticles);
   }
 }
@@ -257,3 +396,5 @@ async function synthesizeMasterSummary(query, articles) {
 module.exports = {
   synthesizeMasterSummary,
 };
+
+

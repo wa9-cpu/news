@@ -178,7 +178,9 @@ app.get("*", (_req, res) => {
   res.sendFile(path.join(frontendDir, "index.html"));
 });
 
-app.listen(config.PORT, () => {
+app.listen(config.PORT, "0.0.0.0", () => {
   // eslint-disable-next-line no-console
-  console.log(`Backend running on http://localhost:${config.PORT}`);
+  console.log(`Backend running on http://0.0.0.0:${config.PORT}`);
 });
+
+

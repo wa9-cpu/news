@@ -148,8 +148,85 @@ function splitIntoParagraphs(text) {
   return paragraphs;
 }
 
+function parseStructuredSections(summaryText) {
+  const raw = String(summaryText || "").replace(/\r\n/g, "\n");
+  const lines = raw.split("\n");
+  const sections = {
+    main: [],
+    facts: [],
+    sources: [],
+    explore: [],
+  };
+
+  let active = "";
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+
+    if (/^Main Answer$/i.test(trimmed)) {
+      active = "main";
+      continue;
+    }
+    if (/^Key Facts$/i.test(trimmed)) {
+      active = "facts";
+      continue;
+    }
+    if (/^Sources$/i.test(trimmed)) {
+      active = "sources";
+      continue;
+    }
+    if (/^Explore More$/i.test(trimmed)) {
+      active = "explore";
+      continue;
+    }
+
+    if (active) {
+      sections[active].push(trimmed);
+    }
+  }
+
+  const hasStructure =
+    sections.main.length || sections.facts.length || sections.sources.length || sections.explore.length;
+
+  return hasStructure ? sections : null;
+}
 function renderMasterSummary(summary) {
   summaryContent.innerHTML = "";
+
+  const structured = parseStructuredSections(summary);
+  if (structured) {
+    const heading = document.createElement("h3");
+    heading.textContent = "Main Answer";
+    heading.className = "summary-subheading";
+    summaryContent.appendChild(heading);
+
+    const list = document.createElement("ul");
+    list.className = "summary-facts";
+    const mainItems = structured.main.length
+      ? structured.main
+      : ["No concise fact bullets were returned."];
+
+    mainItems.forEach((line) => {
+      const li = document.createElement("li");
+      li.textContent = line.replace(/^[-*]\s*/, "");
+      list.appendChild(li);
+    });
+    summaryContent.appendChild(list);
+
+    const layerContent = [];
+    if (structured.facts.length) {
+      layerContent.push(`Key Facts ${structured.facts.join(" ")}`);
+    }
+    if (structured.sources.length) {
+      layerContent.push(`Sources ${structured.sources.join(" ")}`);
+    }
+    if (structured.explore.length) {
+      layerContent.push(`Explore More ${structured.explore.join(" ")}`);
+    }
+
+    return layerContent.length ? layerContent : splitIntoParagraphs(summary);
+  }
+
   const paragraphs = splitIntoParagraphs(summary);
 
   if (!paragraphs.length) {
@@ -168,6 +245,18 @@ function renderMasterSummary(summary) {
 }
 
 function generateKeyInsights(summaryText) {
+  const structured = parseStructuredSections(summaryText);
+  if (structured && structured.facts.length) {
+    const extracted = structured.facts
+      .map((line) => line.replace(/^[-*]\s*/, ""))
+      .map((line) => line.replace(/\s*--\s*Confidence:[^|]+\([^)]*\)/i, ""))
+      .map((line) => cleanText(line))
+      .filter(Boolean)
+      .slice(0, 3);
+
+    if (extracted.length >= 3) return extracted;
+  }
+
   const sentences = cleanText(summaryText)
     .split(/(?<=[.!?])\s+/)
     .map((s) => cleanText(s))
@@ -649,3 +738,7 @@ document.addEventListener("keydown", (event) => {
 setSourcesEnabled(false);
 setStatus("Search for any topic to begin.");
 updateReadingProgress();
+
+
+
+

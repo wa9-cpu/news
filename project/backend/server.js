@@ -1,4 +1,4 @@
-const express = require("express");
+﻿const express = require("express");
 const cors = require("cors");
 const helmet = require("helmet");
 const morgan = require("morgan");
@@ -29,9 +29,17 @@ function cacheKey(query) {
   return cleanText(String(query || "")).toLowerCase();
 }
 
-function ensureParagraphs(summary) {
+function normalizeMasterSummary(summary) {
   const raw = String(summary || "").replace(/\r\n/g, "\n").trim();
   if (!raw) return "No summary could be generated.";
+
+  const structured =
+    /(^|\n)Main Answer\s*$/im.test(raw) &&
+    /(^|\n)Key Facts\s*$/im.test(raw) &&
+    /(^|\n)Sources\s*$/im.test(raw) &&
+    /(^|\n)Explore More\s*$/im.test(raw);
+
+  if (structured) return raw;
 
   const parts = raw
     .split(/\n{2,}/)
@@ -55,7 +63,7 @@ async function runPipeline(query) {
   const dataset = await collectResearchDataset(query);
   const uniqueArticles = deduplicateArticles(dataset.articles || []);
 
-  const masterSummary = ensureParagraphs(
+  const masterSummary = normalizeMasterSummary(
     await synthesizeMasterSummary(query, uniqueArticles)
   );
 
@@ -182,5 +190,3 @@ app.listen(config.PORT, "0.0.0.0", () => {
   // eslint-disable-next-line no-console
   console.log(`Backend running on http://0.0.0.0:${config.PORT}`);
 });
-
-

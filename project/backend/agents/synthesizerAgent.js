@@ -2,32 +2,127 @@ const axios = require("axios");
 const config = require("../config");
 const { cleanText } = require("./researchAgent");
 
-const OPENAI_CHAT_COMPLETIONS_URL = "https://api.openai.com/v1/chat/completions";
 const OPENAI_KEY_PLACEHOLDER_PATTERNS = [
   /INSERT_YOUR_OPENAI_API_KEY_HERE/i,
   /^YOUR_OPENAI_API_KEY$/i,
+  /^sk-svcacct-/i,
 ];
-const ALLOWED_MODELS = new Set(["gpt-4o", "gpt-4.1", "gpt-4o-mini"]);
 
-function hasOpenAiKey() {
-  const key = String(config.OPENAI_API_KEY || "").trim();
+const OPENROUTER_KEY_PLACEHOLDER_PATTERNS = [
+  /INSERT_YOUR_OPENROUTER_API_KEY_HERE/i,
+  /^YOUR_OPENROUTER_API_KEY$/i,
+  /^sk-or-v1-your/i,
+];
+
+const ALLOWED_OPENAI_MODELS = new Set(["gpt-4o", "gpt-4.1", "gpt-4o-mini"]);
+
+function trimValue(value) {
+  return String(value || "").trim();
+}
+
+function normalizeBaseUrl(baseUrl, fallback) {
+  const base = trimValue(baseUrl) || fallback;
+  return base.replace(/\/+$/, "");
+}
+
+function buildChatCompletionsUrl(baseUrl, fallback) {
+  return `${normalizeBaseUrl(baseUrl, fallback)}/chat/completions`;
+}
+
+function hasUsableKey(value, placeholderPatterns) {
+  const key = trimValue(value);
   if (!key) return false;
-  if (OPENAI_KEY_PLACEHOLDER_PATTERNS.some((pattern) => pattern.test(key))) {
-    return false;
-  }
+  if (placeholderPatterns.some((pattern) => pattern.test(key))) return false;
   return true;
 }
 
-function resolveModelName() {
-  const configured = String(config.OPENAI_MODEL || "").trim();
-  if (ALLOWED_MODELS.has(configured)) return configured;
+function looksLikeOpenRouterKey(value) {
+  return /^sk-or-v1-/i.test(trimValue(value));
+}
+
+function hasOpenAiKey() {
+  return hasUsableKey(config.OPENAI_API_KEY, OPENAI_KEY_PLACEHOLDER_PATTERNS);
+}
+
+function hasOpenRouterKey() {
+  return hasUsableKey(
+    config.OPENROUTER_API_KEY,
+    OPENROUTER_KEY_PLACEHOLDER_PATTERNS
+  );
+}
+
+function resolveOpenAiModelName() {
+  const configured = trimValue(config.OPENAI_MODEL);
+  if (ALLOWED_OPENAI_MODELS.has(configured)) return configured;
 
   if (configured) {
     console.warn(
       `[Synthesizer] Unsupported OPENAI_MODEL='${configured}'. Falling back to 'gpt-4.1'.`
     );
   }
+
   return "gpt-4.1";
+}
+
+function resolveOpenRouterModelName() {
+  const configured = trimValue(config.OPENROUTER_MODEL);
+  if (configured) return configured;
+  return "openai/gpt-4o-mini";
+}
+
+function resolveProvider() {
+  if (hasOpenRouterKey()) {
+    return {
+      name: "openrouter",
+      apiKey: trimValue(config.OPENROUTER_API_KEY),
+      model: resolveOpenRouterModelName(),
+      url: buildChatCompletionsUrl(
+        config.OPENROUTER_BASE_URL,
+        "https://openrouter.ai/api/v1"
+      ),
+      headers: {
+        Authorization: `Bearer ${trimValue(config.OPENROUTER_API_KEY)}`,
+        "Content-Type": "application/json",
+        "HTTP-Referer": trimValue(config.OPENROUTER_HTTP_REFERER) || "http://localhost:8080",
+        "X-Title": trimValue(config.OPENROUTER_APP_TITLE) || "Deep Factual Research Engine",
+      },
+    };
+  }
+
+  const openAiKey = trimValue(config.OPENAI_API_KEY);
+
+  if (looksLikeOpenRouterKey(openAiKey)) {
+    return {
+      name: "openrouter",
+      apiKey: openAiKey,
+      model: resolveOpenRouterModelName(),
+      url: buildChatCompletionsUrl(
+        config.OPENROUTER_BASE_URL,
+        "https://openrouter.ai/api/v1"
+      ),
+      headers: {
+        Authorization: `Bearer ${openAiKey}`,
+        "Content-Type": "application/json",
+        "HTTP-Referer": trimValue(config.OPENROUTER_HTTP_REFERER) || "http://localhost:8080",
+        "X-Title": trimValue(config.OPENROUTER_APP_TITLE) || "Deep Factual Research Engine",
+      },
+    };
+  }
+
+  if (hasOpenAiKey()) {
+    return {
+      name: "openai",
+      apiKey: openAiKey,
+      model: resolveOpenAiModelName(),
+      url: buildChatCompletionsUrl(config.OPENAI_BASE_URL, "https://api.openai.com/v1"),
+      headers: {
+        Authorization: `Bearer ${openAiKey}`,
+        "Content-Type": "application/json",
+      },
+    };
+  }
+
+  return null;
 }
 
 function buildKnowledgeBase(articles) {
@@ -304,11 +399,10 @@ function buildUserPrompt(query, knowledgeBase) {
   ].join("\n");
 }
 
-async function requestSummaryWithRetry(query, articles) {
+async function requestSummaryWithRetry(query, articles, provider) {
   const knowledgeBase = buildKnowledgeBase(articles);
   const systemPrompt = buildSystemPrompt();
   const userPrompt = buildUserPrompt(query, knowledgeBase);
-  const model = resolveModelName();
 
   const maxRetries = 2;
   let attempt = 0;
@@ -317,9 +411,9 @@ async function requestSummaryWithRetry(query, articles) {
   while (attempt <= maxRetries) {
     try {
       const response = await axios.post(
-        OPENAI_CHAT_COMPLETIONS_URL,
+        provider.url,
         {
-          model,
+          model: provider.model,
           temperature: 0.2,
           max_tokens: 1800,
           messages: [
@@ -329,10 +423,7 @@ async function requestSummaryWithRetry(query, articles) {
         },
         {
           timeout: config.FETCH_TIMEOUT_MS * 2,
-          headers: {
-            Authorization: `Bearer ${config.OPENAI_API_KEY}`,
-            "Content-Type": "application/json",
-          },
+          headers: provider.headers,
         }
       );
 
@@ -343,14 +434,14 @@ async function requestSummaryWithRetry(query, articles) {
 
       lastError = new Error("Empty model response");
       console.warn(
-        `[Synthesizer] OpenAI returned empty content (attempt ${attempt + 1}/${maxRetries + 1}).`
+        `[Synthesizer] ${provider.name} returned empty content (attempt ${attempt + 1}/${maxRetries + 1}).`
       );
     } catch (error) {
       const status = error?.response?.status;
       const data = error?.response?.data;
-      const message = error?.message || "Unknown OpenAI error";
+      const message = error?.message || `Unknown ${provider.name} error`;
       console.error(
-        `[Synthesizer] OpenAI request failed (attempt ${attempt + 1}/${maxRetries + 1})`,
+        `[Synthesizer] ${provider.name} request failed (attempt ${attempt + 1}/${maxRetries + 1})`,
         { status, message, data }
       );
       lastError = error;
@@ -363,7 +454,7 @@ async function requestSummaryWithRetry(query, articles) {
     }
   }
 
-  throw lastError || new Error("OpenAI request failed");
+  throw lastError || new Error(`${provider.name} request failed`);
 }
 
 async function synthesizeMasterSummary(query, articles) {
@@ -373,19 +464,25 @@ async function synthesizeMasterSummary(query, articles) {
   }
 
   const boundedArticles = articles.slice(0, 12);
+  const provider = resolveProvider();
 
-  if (!hasOpenAiKey()) {
+  if (!provider) {
     console.log("Using fallback summary mode");
     return fallbackMasterSummary(query, boundedArticles);
   }
 
-  console.log("Using OpenAI synthesis engine");
+  if (provider.name === "openrouter") {
+    console.log("Using OpenRouter synthesis engine");
+  } else {
+    console.log("Using OpenAI synthesis engine");
+  }
+
   try {
-    const llmSummary = await requestSummaryWithRetry(query, boundedArticles);
+    const llmSummary = await requestSummaryWithRetry(query, boundedArticles, provider);
     return sanitizeSummaryText(llmSummary);
   } catch (error) {
     console.error(
-      "[Synthesizer] Falling back after OpenAI failure:",
+      `[Synthesizer] Falling back after ${provider.name} failure:`,
       error?.message || "Unknown error"
     );
     console.log("Using fallback summary mode");
@@ -396,5 +493,3 @@ async function synthesizeMasterSummary(query, articles) {
 module.exports = {
   synthesizeMasterSummary,
 };
-
-

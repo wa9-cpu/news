@@ -10,7 +10,10 @@ project/
     index.html
     styles.css
     script.js
+    logo.svg
+    favicon.svg
   backend/
+    .env.example
     server.js
     config.js
     package.json
@@ -36,8 +39,8 @@ project/
 - Removes mirrored/syndicated/near-duplicate article texts
 
 3. Knowledge Synthesizer Agent
-- Uses high-reasoning OpenAI model if key is configured
-- Falls back to deterministic multi-paragraph synthesis if model is unavailable
+- Uses OpenRouter (preferred) or OpenAI if keys are configured
+- Falls back to deterministic multi-paragraph synthesis if model calls fail
 
 4. Explore Topic Agent
 - Generates 6 related topic angles
@@ -65,11 +68,17 @@ cd D:\code\news\project\backend
 "C:\Program Files\nodejs\npm.cmd" install
 ```
 
-2. Configure API keys in `backend/config.js` or env vars:
+2. Configure environment values:
 
-- `OPENAI_API_KEY`
+```powershell
+cd D:\code\news\project\backend
+Copy-Item .env.example .env
+```
+
+Fill `.env` with your keys (recommended):
+- `OPENROUTER_API_KEY`
+- `SEARCH_API_KEY` (optional but strongly recommended for stable source retrieval)
 - `NANOBANANA_API_KEY`
-- `SEARCH_API_KEY`
 
 3. Start server:
 
@@ -79,7 +88,6 @@ cd D:\code\news\project\backend
 ```
 
 4. Open in browser:
-
 - `http://localhost:8080`
 
 ## Public Deployment (Render)
@@ -100,10 +108,10 @@ node server.js
 ```
 
 6. Set environment variables in Render dashboard:
-- `OPENAI_API_KEY`
-- `NANOBANANA_API_KEY`
+- `OPENROUTER_API_KEY` (or `OPENAI_API_KEY`)
 - `SEARCH_API_KEY`
-- optional: `OPENAI_MODEL`, `PORT`
+- `NANOBANANA_API_KEY`
+- optional: `OPENROUTER_MODEL`, `OPENAI_MODEL`, `PORT`
 
 7. Deploy and open the generated public URL.
 
@@ -111,4 +119,4 @@ node server.js
 
 - No secrets are committed.
 - Backend caches results and prevents duplicate in-flight requests.
-- Frontend uses a `SOURCES` sidebar to keep sources outside the summary text.
+- Frontend uses a `SOURCES` sidebar so source links stay outside summary body.

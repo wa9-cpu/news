@@ -1,4 +1,4 @@
-const axios = require("axios");
+﻿const axios = require("axios");
 const config = require("../config");
 
 function hasNanoKey() {
@@ -8,22 +8,62 @@ function hasNanoKey() {
   );
 }
 
-function svgFallback(text) {
-  const safe = String(text || "")
-    .slice(0, 86)
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;");
+function cleanSeed(text) {
+  return String(text || "research")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 64);
+}
 
-  const svg = `<svg xmlns='http://www.w3.org/2000/svg' width='640' height='360' viewBox='0 0 640 360'><rect width='640' height='360' fill='#dcdcdc'/><rect x='16' y='16' width='608' height='328' fill='none' stroke='#9b9b9b'/><text x='32' y='170' font-size='22' fill='#222' font-family='Arial, sans-serif'>${safe}</text><text x='32' y='205' font-size='14' fill='#555' font-family='Arial, sans-serif'>Informational visual placeholder</text></svg>`;
-  return `data:image/svg+xml;utf8,${encodeURIComponent(svg)}`;
+function photoFallback(text) {
+  const seed = encodeURIComponent(cleanSeed(text) || "research");
+  return `https://picsum.photos/seed/${seed}/640/360`;
+}
+
+function normalizeImageUrl(value) {
+  const raw = String(value || "").trim();
+  if (!raw) return "";
+
+  if (/^https?:\/\//i.test(raw)) {
+    if (/\.svg(\?|$)/i.test(raw)) return "";
+    return raw;
+  }
+
+  if (/^data:image\/svg\+xml/i.test(raw)) return "";
+  if (/^data:image\//i.test(raw)) return raw;
+  return "";
+}
+
+function imageFromPayload(data) {
+  const url =
+    data?.image_url ||
+    data?.url ||
+    data?.data?.[0]?.url ||
+    data?.images?.[0]?.url ||
+    data?.output?.[0]?.url;
+
+  const normalizedUrl = normalizeImageUrl(url);
+  if (normalizedUrl) return normalizedUrl;
+
+  const b64 =
+    data?.b64_json ||
+    data?.image_base64 ||
+    data?.data?.[0]?.b64_json ||
+    data?.output?.[0]?.b64_json;
+
+  if (b64 && String(b64).trim()) {
+    return `data:image/png;base64,${String(b64).trim()}`;
+  }
+
+  return "";
 }
 
 async function generateOneImage(headline) {
   const prompt = `Informational, realistic editorial illustration representing: ${headline}. Neutral tone. No sensationalism.`;
 
   if (!hasNanoKey()) {
-    return svgFallback(headline);
+    return photoFallback(headline);
   }
 
   try {
@@ -42,25 +82,23 @@ async function generateOneImage(headline) {
       }
     );
 
-    const url =
-      response.data?.image_url ||
-      response.data?.data?.[0]?.url ||
-      response.data?.url;
-
-    if (url && /^https?:\/\//i.test(url)) {
-      return url;
-    }
-
-    return svgFallback(headline);
-  } catch {
-    return svgFallback(headline);
+    const resolved = imageFromPayload(response.data || {});
+    if (resolved) return resolved;
+  } catch (error) {
+    console.error(
+      "[ImageAgent] Image API failed, using photo fallback:",
+      error?.message || "Unknown error"
+    );
   }
+
+  return photoFallback(headline);
 }
 
 async function generateImages(headlines) {
   const tasks = (headlines || [])
     .slice(0, 6)
     .map((headline) => generateOneImage(headline));
+
   return Promise.all(tasks);
 }
 

@@ -1,4 +1,4 @@
-<!doctype html>
+﻿<!doctype html>
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
@@ -6,7 +6,7 @@
     <title>Deep Factual Research Engine</title>
     <meta
       name="description"
-      content="An AI platform that reads full news articles and produces factual multi-source summaries."
+      content="AI research platform that analyzes full articles and produces factual summaries."
     />
     <meta
       name="keywords"
@@ -24,6 +24,10 @@
     <link rel="stylesheet" href="styles.css" />
   </head>
   <body class="pre-search">
+    <div id="reading-progress" class="reading-progress" aria-hidden="true">
+      <div id="reading-progress-fill" class="reading-progress-fill"></div>
+    </div>
+
     <header class="site-header">
       <div class="brand-wrap">
         <img src="/logo.svg" alt="Deep Factual Research logo" class="brand-logo" />
@@ -56,7 +60,7 @@
                 <input
                   id="query-input"
                   type="text"
-                  placeholder="Ask a research question�"
+                  placeholder="Ask a research question&#8230;"
                   aria-label="Ask a research question"
                   required
                 />
@@ -73,17 +77,45 @@
         </div>
       </section>
 
-      <section id="results" class="results hidden" aria-live="polite">
-        <article class="panel summary-panel">
-          <h2>Master Summary</h2>
-          <div id="summary-content" class="summary-content"></div>
-          <p id="meta-content" class="meta-content"></p>
-        </article>
+      <section id="results-layout" class="results-layout hidden" aria-live="polite">
+        <section id="results" class="results">
+          <article class="panel summary-panel" id="article-root">
+            <h2>Master Summary</h2>
+            <div id="summary-content" class="summary-content"></div>
 
-        <section class="panel explore-panel" id="about">
-          <h2>Explore More</h2>
-          <div id="explore-grid" class="explore-grid"></div>
+            <section class="key-insights" aria-labelledby="key-insights-title">
+              <h3 id="key-insights-title">Key Insights</h3>
+              <ul id="key-insights-list" class="key-insights-list"></ul>
+            </section>
+
+            <hr class="curiosity-divider" />
+            <button id="curiosity-toggle" class="curiosity-toggle" type="button">
+              Read more if you're curious 
+
+              <span id="curiosity-arrow" aria-hidden="true">&#8595;</span>
+            </button>
+
+            <section id="curiosity-layers" class="curiosity-layers" aria-live="polite"></section>
+
+            <p id="meta-content" class="meta-content"></p>
+          </article>
+
+          <section class="panel explore-panel" id="about">
+            <h2>Explore Deeper</h2>
+            <div id="explore-grid" class="explore-grid"></div>
+          </section>
+
+          <section class="panel sources-panel">
+            <h2>Sources</h2>
+            <ul id="sources-inline" class="sources-inline"></ul>
+          </section>
         </section>
+
+        <aside id="curiosity-tracker" class="panel curiosity-tracker" aria-live="polite">
+          <h3>Curiosity Tracker</h3>
+          <p id="curiosity-count" class="curiosity-count">You explored deeper 0 times.</p>
+          <p id="curiosity-level" class="curiosity-level">Level: Explorer</p>
+        </aside>
       </section>
 
       <section id="how-it-works" class="how-it-works panel">
@@ -104,6 +136,8 @@
     </aside>
 
     <div id="overlay" class="overlay hidden"></div>
+
+    <div id="curiosity-popup" class="curiosity-popup" role="status" aria-live="polite"></div>
 
     <script src="script.js"></script>
   </body>

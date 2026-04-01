@@ -1,0 +1,9 @@
+{
+  "version": 2,
+  "builds": [
+    { "src": "project/frontend/**", "use": "@vercel/static" }
+  ],
+  "rewrites": [
+    { "source": "/(.*)", "destination": "/project/frontend/index.html" }
+  ]
+}

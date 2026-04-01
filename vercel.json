@@ -4,6 +4,6 @@
     { "src": "project/frontend/**", "use": "@vercel/static" }
   ],
   "rewrites": [
-    { "source": "/(.*)", "destination": "/project/frontend/index.html" }
+    { "source": "/(.*)", "destination": "/project/frontend/$1" }
   ]
 }

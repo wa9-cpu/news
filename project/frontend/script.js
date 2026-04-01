@@ -122,10 +122,22 @@ function resolveApiBase() {
 
 const API_BASE = resolveApiBase();
 
-function buildApiUrl(path) {
+function buildApiUrlWithBase(base, path) {
   const safePath = path.startsWith("/") ? path : `/${path}`;
-  if (!API_BASE) return safePath;
-  return `${API_BASE}${safePath}`;
+  if (!base) return safePath;
+  return `${base}${safePath}`;
+}
+
+function buildApiUrl(path) {
+  return buildApiUrlWithBase(API_BASE, path);
+}
+
+function clearStoredApiBase() {
+  try {
+    localStorage.removeItem(API_BASE_STORAGE_KEY);
+  } catch (_error) {
+    // Ignore storage failures.
+  }
 }
 
 function logApiRequest(url, options) {
@@ -927,31 +939,47 @@ async function requestResearch(query, forceRefresh) {
   state.activeAbortController = abortController;
 
   const requestUrl = buildApiUrl("/api/research");
-  logApiRequest(requestUrl, { method: "POST" });
 
-  const fetchPromise = fetch(requestUrl, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ query, forceRefresh }),
-    signal: abortController.signal,
-  })
-    .then(async (response) => {
-      logApiResponse(requestUrl, response.status);
-      const payload = await parseJsonSafe(response);
-      if (!response.ok) {
-        if (response.status === 404) {
-          throw new Error("HTTP 404 (endpoint not found). Check API base URL.");
+  const doFetch = async (url) => {
+    logApiRequest(url, { method: "POST" });
+    const response = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ query, forceRefresh }),
+      signal: abortController.signal,
+    });
+    logApiResponse(url, response.status);
+    const payload = await parseJsonSafe(response);
+    return { response, payload, url };
+  };
+
+  const fetchPromise = (async () => {
+    let { response, payload, url } = await doFetch(requestUrl);
+
+    if (response.status === 404 && API_BASE) {
+      const fallbackUrl = buildApiUrlWithBase("", "/api/research");
+      if (fallbackUrl !== url) {
+        ({ response, payload, url } = await doFetch(fallbackUrl));
+        if (response.ok) {
+          clearStoredApiBase();
         }
-        const details = payload?.details || payload?.error || `HTTP ${response.status}`;
-        throw new Error(details);
       }
-      if (!payload) {
-        throw new Error("The backend returned an empty response.");
-      }
+    }
 
-      state.resultCache.set(key, payload);
-      return payload;
-    })
+    if (!response.ok) {
+      if (response.status === 404) {
+        throw new Error("HTTP 404 (endpoint not found). Check API base URL.");
+      }
+      const details = payload?.details || payload?.error || `HTTP ${response.status}`;
+      throw new Error(details);
+    }
+    if (!payload) {
+      throw new Error("The backend returned an empty response.");
+    }
+
+    state.resultCache.set(key, payload);
+    return payload;
+  })()
     .catch((error) => {
       if (error && error.name === "AbortError") {
         throw new Error("Canceled due to a newer search request.");

@@ -1,9 +1,11 @@
 {
   "version": 2,
   "builds": [
+    { "src": "api/**/*.js", "use": "@vercel/node" },
     { "src": "project/frontend/**", "use": "@vercel/static" }
   ],
-  "rewrites": [
-    { "source": "/(.*)", "destination": "/project/frontend/$1" }
+  "routes": [
+    { "src": "/api/(.*)", "dest": "/api/$1" },
+    { "src": "/(.*)", "dest": "/project/frontend/$1" }
   ]
 }

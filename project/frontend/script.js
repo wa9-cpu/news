@@ -105,7 +105,37 @@ function cleanText(value) {
     .replace(/\s+/g, " ")
     .trim();
 }
+const API_BASE_STORAGE_KEY = "deep-factual-api-base";
 
+function resolveApiBase() {
+  const meta = document.querySelector('meta[name="api-base"]');
+  const metaValue = meta ? meta.getAttribute("content") : "";
+  const fromConfig = window.APP_CONFIG && window.APP_CONFIG.API_BASE;
+  const stored = localStorage.getItem(API_BASE_STORAGE_KEY) || "";
+  const urlParam = new URLSearchParams(window.location.search).get("api") || "";
+  const chosen = cleanText(urlParam || fromConfig || metaValue || stored);
+  if (urlParam) {
+    localStorage.setItem(API_BASE_STORAGE_KEY, chosen);
+  }
+  return chosen.replace(/\/+$/, "");
+}
+
+const API_BASE = resolveApiBase();
+
+function buildApiUrl(path) {
+  const safePath = path.startsWith("/") ? path : `/${path}`;
+  if (!API_BASE) return safePath;
+  return `${API_BASE}${safePath}`;
+}
+
+function logApiRequest(url, options) {
+  const method = options?.method || "GET";
+  console.debug(`[API] ${method} ${url}`);
+}
+
+function logApiResponse(url, status) {
+  console.debug(`[API] ${status} ${url}`);
+}
 function escapeHtml(value) {
   return String(value || "")
     .replace(/&/g, "&amp;")
@@ -896,15 +926,18 @@ async function requestResearch(query, forceRefresh) {
   const abortController = new AbortController();
   state.activeAbortController = abortController;
 
-  const fetchPromise = fetch("/api/research", {
+  const requestUrl = buildApiUrl("/api/research");`r`n  logApiRequest(requestUrl, { method: "POST" });`r`n`r`n  const fetchPromise = fetch(requestUrl, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ query, forceRefresh }),
     signal: abortController.signal,
   })
     .then(async (response) => {
-      const payload = await parseJsonSafe(response);
-      if (!response.ok) {
+      logApiResponse(requestUrl, response.status);
+      const payload = await parseJsonSafe(response);      if (!response.ok) {
+        if (response.status === 404) {
+          throw new Error("HTTP 404 (endpoint not found). Check API base URL.");
+        }
         const details = payload?.details || payload?.error || `HTTP ${response.status}`;
         throw new Error(details);
       }
@@ -1067,6 +1100,12 @@ document.addEventListener("keydown", (event) => {
 setSourcesEnabled(false);
 setStatus("Search for any topic to begin.");
 scheduleReadingProgress();
+
+
+
+
+
+
 
 
 

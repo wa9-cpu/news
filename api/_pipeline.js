@@ -1,33 +1,26 @@
-const express = require("express");
-const cors = require("cors");
-const helmet = require("helmet");
-const morgan = require("morgan");
-const path = require("path");
-const { LRUCache } = require("lru-cache");
+const { collectResearchDataset, cleanText } = require("../project/backend/agents/researchAgent");
+const { deduplicateArticles } = require("../project/backend/agents/dedupeAgent");
+const { synthesizeMasterSummary } = require("../project/backend/agents/synthesizerAgent");
+const { generateExploreTopics } = require("../project/backend/agents/exploreAgent");
+const { generateHeadlines } = require("../project/backend/agents/headlineAgent");
+const { generateImages } = require("../project/backend/agents/imageAgent");
 
-const config = require("./config");
-const { collectResearchDataset, cleanText } = require("./agents/researchAgent");
-const { deduplicateArticles } = require("./agents/dedupeAgent");
-const { synthesizeMasterSummary } = require("./agents/synthesizerAgent");
-const { generateExploreTopics } = require("./agents/exploreAgent");
-const { generateHeadlines } = require("./agents/headlineAgent");
-const { generateImages } = require("./agents/imageAgent");
-
-const app = express();
-app.use(helmet({ contentSecurityPolicy: false }));
-app.use(cors());
-app.use(express.json({ limit: "1mb" }));
-app.use(morgan("dev"));
-
-const frontendDir = path.join(__dirname, "../frontend");
-app.use(express.static(frontendDir));
-
-const resultCache = new LRUCache({ max: 120, ttl: config.CACHE_TTL_MS });
-const inFlight = new Map();
-
-function cacheKey(query) {
-  return cleanText(String(query || "")).toLowerCase();
-}
+const SOCIAL_SOURCE_DOMAINS = [
+  "x.com",
+  "twitter.com",
+  "t.co",
+  "reddit.com",
+  "redd.it",
+  "facebook.com",
+  "fb.com",
+  "instagram.com",
+  "instagr.am",
+  "threads.net",
+  "linkedin.com",
+  "tiktok.com",
+  "youtube.com",
+  "youtu.be",
+];
 
 function normalizeMasterSummary(summary) {
   const raw = String(summary || "").replace(/\r\n/g, "\n").trim();
@@ -58,23 +51,6 @@ function normalizeMasterSummary(summary) {
   ];
   return grouped.join("\n\n");
 }
-
-const SOCIAL_SOURCE_DOMAINS = [
-  "x.com",
-  "twitter.com",
-  "t.co",
-  "reddit.com",
-  "redd.it",
-  "facebook.com",
-  "fb.com",
-  "instagram.com",
-  "instagr.am",
-  "threads.net",
-  "linkedin.com",
-  "tiktok.com",
-  "youtube.com",
-  "youtu.be",
-];
 
 function isSocialLink(url) {
   if (!url) return false;
@@ -145,8 +121,6 @@ function buildSocialFallbackSources(query) {
   ];
 }
 
-
-
 const AGENT_REGISTRY = {
   research: async ({ query }) => {
     const cleanQuery = cleanText(query || "");
@@ -192,6 +166,7 @@ function listAgents() {
     status: "ready",
   }));
 }
+
 async function runPipeline(query) {
   const dataset = await collectResearchDataset(query);
   const uniqueArticles = deduplicateArticles(dataset.articles || []);
@@ -227,6 +202,7 @@ async function runPipeline(query) {
   fallbackSocial.forEach((entry) => {
     if (!existing.has(entry.link)) sources.push(entry);
   });
+
   return {
     query,
     master_summary: masterSummary,
@@ -240,166 +216,12 @@ async function runPipeline(query) {
   };
 }
 
-async function getOrRunQuery(query, forceRefresh = false) {
-  const key = cacheKey(query);
-  if (!key) throw new Error("Query must not be empty.");
-
-  if (!forceRefresh) {
-    const cached = resultCache.get(key);
-    if (cached) return cached;
-  }
-
-  if (inFlight.has(key)) {
-    return inFlight.get(key);
-  }
-
-  const promise = runPipeline(query)
-    .then((result) => {
-      resultCache.set(key, result);
-      inFlight.delete(key);
-      return result;
-    })
-    .catch((error) => {
-      inFlight.delete(key);
-      throw error;
-    });
-
-  inFlight.set(key, promise);
-  return promise;
-}
-
-app.get("/api/health", (_req, res) => {
-  res.json({ status: "ok", service: "deep-factual-research" });
-});
-
-app.get("/api/agents", (_req, res) => {
-  res.json({ agents: listAgents() });
-});
-
-app.post("/api/agent/:name", async (req, res) => {
-  const name = cleanText(req.params?.name || "").toLowerCase();
-  const handler = AGENT_REGISTRY[name];
-  if (!handler) {
-    return res.status(404).json({ error: Unknown agent:  });
-  }
-
-  try {
-    const result = await handler(req.body || {});
-    return res.json({ agent: name, result });
-  } catch (error) {
-    return res.status(500).json({
-      error: Agent  failed,
-      details: cleanText(error.message || "Unknown error"),
-    });
-  }
-});
-
-app.post("/api/router", async (req, res) => {
-  try {
-    const query = cleanText(req.body?.query || "");
-    const forceRefresh = Boolean(req.body?.forceRefresh);
-    if (!query) {
-      return res.status(400).json({ error: "Query is required." });
-    }
-
-    const result = await getOrRunQuery(query, forceRefresh);
-    return res.json(result);
-  } catch (error) {
-    return res.status(500).json({
-      error: "Router pipeline failed",
-      details: cleanText(error.message || "Unknown error"),
-    });
-  }
-});
-
-app.post("/api/chat", async (req, res) => {
-  try {
-    const query = cleanText(req.body?.query || "");
-    if (!query) {
-      return res.status(400).json({ error: "Query is required." });
-    }
-
-    const result = await getOrRunQuery(query, Boolean(req.body?.forceRefresh));
-    return res.json(result);
-  } catch (error) {
-    return res.status(500).json({
-      error: "Chat pipeline failed",
-      details: cleanText(error.message || "Unknown error"),
-    });
-  }
-});
-
-app.post("/api/research", async (req, res) => {
-  try {
-    const query = cleanText(req.body?.query || "");
-    const forceRefresh = Boolean(req.body?.forceRefresh);
-    if (!query) {
-      return res.status(400).json({ error: "Query is required." });
-    }
-
-    const result = await getOrRunQuery(query, forceRefresh);
-    return res.json(result);
-  } catch (error) {
-    return res.status(500).json({
-      error: "Research pipeline failed",
-      details: cleanText(error.message || "Unknown error"),
-    });
-  }
-});
-
-app.post("/api/explore", async (req, res) => {
-  try {
-    const query = cleanText(req.body?.query || "");
-    if (!query) return res.status(400).json({ error: "Query is required." });
-
-    const result = await getOrRunQuery(query, false);
-    return res.json({ query, explore_more: result.explore_more });
-  } catch (error) {
-    return res.status(500).json({
-      error: "Explore topic generation failed",
-      details: cleanText(error.message || "Unknown error"),
-    });
-  }
-});
-
-app.post("/api/article", async (req, res) => {
-  try {
-    const topic = cleanText(req.body?.topic || "");
-    if (!topic) return res.status(400).json({ error: "Topic is required." });
-
-    const result = await getOrRunQuery(topic, false);
-    return res.json(result);
-  } catch (error) {
-    return res.status(500).json({
-      error: "Article generation failed",
-      details: cleanText(error.message || "Unknown error"),
-    });
-  }
-});
-
-
-app.use("/api", (req, res) => {
-  // eslint-disable-next-line no-console
-  console.warn(`Missing API route: ${req.method} ${req.originalUrl}`);
-  res.status(404).json({ error: "Endpoint not found", path: req.originalUrl });
-});
-app.get("*", (_req, res) => {
-  res.sendFile(path.join(frontendDir, "index.html"));
-});
-
-app.listen(config.PORT, "0.0.0.0", () => {
-  // eslint-disable-next-line no-console
-  console.log(`Backend running on http://0.0.0.0:${config.PORT}`);
-});
-
-
-
-
-
-
-
-
-
-
-
-
+module.exports = {
+  runPipeline,
+  normalizeMasterSummary,
+  buildSocialFallbackSources,
+  isSocialLink,
+  AGENT_REGISTRY,
+  listAgents,
+  cleanText,
+};

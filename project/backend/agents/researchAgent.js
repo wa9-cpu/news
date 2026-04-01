@@ -1,10 +1,27 @@
-const axios = require("axios");
+﻿const axios = require("axios");
 const cheerio = require("cheerio");
 const { JSDOM } = require("jsdom");
 const { Readability } = require("@mozilla/readability");
 const { LRUCache } = require("lru-cache");
 
 const config = require("../config");
+
+const SOCIAL_DOMAINS = [
+  "x.com",
+  "twitter.com",
+  "t.co",
+  "reddit.com",
+  "redd.it",
+  "facebook.com",
+  "fb.com",
+  "instagram.com",
+  "instagr.am",
+  "threads.net",
+  "linkedin.com",
+  "tiktok.com",
+  "youtube.com",
+  "youtu.be",
+];
 
 const searchCache = new LRUCache({ max: 100, ttl: config.CACHE_TTL_MS });
 const articleCache = new LRUCache({ max: 300, ttl: config.CACHE_TTL_MS });
@@ -50,6 +67,7 @@ function normalizeUrl(input) {
   } catch {
     return String(input || "");
   }
+
 }
 
 function cleanText(text) {
@@ -94,6 +112,85 @@ function extractDomain(url) {
   } catch {
     return "unknown";
   }
+}
+
+function isSocialDomain(url) {
+  try {
+    const host = new URL(url).hostname.replace(/^www\./i, "").toLowerCase();
+    return SOCIAL_DOMAINS.some(
+      (domain) => host === domain || host.endsWith(`.${domain}`)
+    );
+  } catch {
+    return false;
+  }
+}
+
+function classifyCandidateBucket(url, fallbackBucket) {
+  if (!url) return fallbackBucket;
+  return isSocialDomain(url) ? "social" : fallbackBucket;
+}
+
+function isRedditUrl(url) {
+  try {
+    const host = new URL(url).hostname.replace(/^www\./i, "").toLowerCase();
+    return host === "reddit.com" || host.endsWith(".reddit.com") || host === "redd.it";
+  } catch {
+    return false;
+  }
+}
+
+function extractSocialDescription($) {
+  const selectors = [
+    'meta[property="og:description"]',
+    'meta[name="description"]',
+    'meta[name="twitter:description"]',
+  ];
+
+  for (const selector of selectors) {
+    const el = $(selector).first();
+    if (!el || !el.length) continue;
+    const value = el.attr("content") || el.text();
+    if (cleanText(value)) return cleanText(value);
+  }
+
+  return "";
+}
+
+async function fetchRedditJsonText(url) {
+  try {
+    const jsonUrl = url.endsWith(".json") ? url : `${url}.json`;
+    const response = await axios.get(jsonUrl, {
+      timeout: config.FETCH_TIMEOUT_MS,
+      headers: { "User-Agent": config.USER_AGENT },
+      validateStatus: (status) => status >= 200 && status < 400,
+    });
+
+    const post = response.data?.[0]?.data?.children?.[0]?.data;
+    if (!post) return "";
+    const combined = [post.title, post.selftext].filter(Boolean).join("\n\n");
+    return cleanText(combined);
+  } catch {
+    return "";
+  }
+}
+
+function buildSocialStub(candidate, url) {
+  const safeUrl = normalizeUrl(url || candidate.url || "");
+  if (!safeUrl) return null;
+
+  const title = cleanText(candidate.title || "Social post");
+  const hint = cleanText(candidate.source_hint || "");
+  const text = cleanText([title, hint].filter(Boolean).join(" "));
+
+  return {
+    title: title || "Social post",
+    source: extractDomain(safeUrl),
+    author: "",
+    published_date: cleanText(candidate.published_date || ""),
+    original_url: safeUrl,
+    full_text: text || "Social post context unavailable.",
+    bucket: "social",
+  };
 }
 
 function isGoogleNewsUrl(url) {
@@ -171,7 +268,7 @@ async function resolveOriginalPublisherUrl(rawUrl) {
   return normalized;
 }
 
-async function serperSearch(query, endpoint, num, bucket) {
+async function serperSearch(query, endpoint, num, bucketHint) {
   const url = `${config.SERPER_API_BASE}/${endpoint}`;
   const response = await axios.post(
     url,
@@ -189,13 +286,16 @@ async function serperSearch(query, endpoint, num, bucket) {
   const rows = endpoint === "news" ? data.news || [] : data.organic || [];
 
   return rows
-    .map((row) => ({
-      title: cleanText(row.title || row.snippet || ""),
-      url: normalizeUrl(row.link || row.url || ""),
-      published_date: cleanText(row.date || row.datePublished || ""),
-      source_hint: cleanText(row.source || extractDomain(row.link || row.url || "")),
-      bucket,
-    }))
+    .map((row) => {
+      const url = normalizeUrl(row.link || row.url || "");
+      return {
+        title: cleanText(row.title || row.snippet || ""),
+        url,
+        published_date: cleanText(row.date || row.datePublished || ""),
+        source_hint: cleanText(row.source || extractDomain(row.link || row.url || "")),
+        bucket: classifyCandidateBucket(url, bucketHint),
+      };
+    })
     .filter((row) => row.url.startsWith("http"));
 }
 
@@ -211,7 +311,7 @@ async function googleNewsFallback(query) {
     url: normalizeUrl(row.link),
     published_date: row.date,
     source_hint: "google-news-index",
-    bucket: "news",
+    bucket: classifyCandidateBucket(normalizeUrl(row.link), "news"),
   }));
 }
 
@@ -227,7 +327,7 @@ async function bingNewsFallback(query) {
     url: unwrapBingNewsUrl(row.link),
     published_date: row.date,
     source_hint: extractDomain(unwrapBingNewsUrl(row.link)),
-    bucket: "news",
+    bucket: classifyCandidateBucket(unwrapBingNewsUrl(row.link), "news"),
   }));
 }
 
@@ -260,7 +360,7 @@ async function duckDuckGoFallback(query, bucket) {
       url: normalizedUrl,
       published_date: "",
       source_hint: extractDomain(normalizedUrl),
-      bucket,
+      bucket: classifyCandidateBucket(normalizedUrl, bucket),
     });
   });
 
@@ -275,24 +375,66 @@ async function gatherCandidates(query) {
   let candidates = [];
 
   if (hasSearchApiKey()) {
-    const [news, reports, blogs] = await Promise.allSettled([
+    const socialQueries = [
+      `${query} site:reddit.com`,
+      `${query} site:redd.it`,
+      `${query} site:x.com`,
+      `${query} site:t.co`,
+      `${query} site:twitter.com`,
+      `${query} site:facebook.com`,
+      `${query} site:fb.com`,
+      `${query} site:instagram.com`,
+      `${query} site:instagr.am`,
+      `${query} site:threads.net`,
+      `${query} site:linkedin.com`,
+      `${query} site:tiktok.com`,
+      `${query} site:youtube.com`,
+      `${query} site:youtu.be`,
+    ];
+
+    const searchTasks = [
       serperSearch(query, "news", 24, "news"),
       serperSearch(`${query} in-depth analysis report`, "search", 20, "article"),
       serperSearch(`${query} expert blog analysis`, "search", 20, "blog"),
-    ]);
+      ...socialQueries.map((q) => serperSearch(q, "search", 12, "social")),
+    ];
 
-    [news, reports, blogs].forEach((entry) => {
+    const [news, reports, blogs, ...social] = await Promise.allSettled(searchTasks);
+
+    [news, reports, blogs, ...social].forEach((entry) => {
       if (entry.status === "fulfilled") candidates.push(...entry.value);
     });
   } else {
-    const [bingNews, googleNews, reports, blogs] = await Promise.allSettled([
+    const socialQueries = [
+      `${query} site:reddit.com`,
+      `${query} site:redd.it`,
+      `${query} site:x.com`,
+      `${query} site:t.co`,
+      `${query} site:twitter.com`,
+      `${query} site:facebook.com`,
+      `${query} site:fb.com`,
+      `${query} site:instagram.com`,
+      `${query} site:instagr.am`,
+      `${query} site:threads.net`,
+      `${query} site:linkedin.com`,
+      `${query} site:tiktok.com`,
+      `${query} site:youtube.com`,
+      `${query} site:youtu.be`,
+    ];
+
+    const fallbackTasks = [
       bingNewsFallback(query),
       googleNewsFallback(query),
       duckDuckGoFallback(`${query} investigation analysis`, "article"),
       duckDuckGoFallback(`${query} expert blog`, "blog"),
-    ]);
+      ...socialQueries.map((q) => duckDuckGoFallback(q, "social")),
+    ];
 
-    [bingNews, googleNews, reports, blogs].forEach((entry) => {
+    const [bingNews, googleNews, reports, blogs, ...social] = await Promise.allSettled(
+      fallbackTasks
+    );
+
+    [bingNews, googleNews, reports, blogs, ...social].forEach((entry) => {
       if (entry.status === "fulfilled") candidates.push(...entry.value);
     });
   }
@@ -371,19 +513,36 @@ async function fetchAndExtractArticle(candidate) {
   const fromCache = articleCache.get(normalized);
   if (fromCache) return fromCache;
 
-  const response = await axios.get(normalized, {
-    timeout: config.FETCH_TIMEOUT_MS,
-    maxRedirects: 8,
-    headers: { "User-Agent": config.USER_AGENT },
-    validateStatus: (status) => status >= 200 && status < 500,
-  });
+  let response;
+  try {
+    response = await axios.get(normalized, {
+      timeout: config.FETCH_TIMEOUT_MS,
+      maxRedirects: 8,
+      headers: { "User-Agent": config.USER_AGENT },
+      validateStatus: (status) => status >= 200 && status < 500,
+    });
+  } catch {
+    if (candidate.bucket === "social") {
+      return buildSocialStub(candidate, normalized);
+    }
+    return null;
+  }
 
-  if (response.status >= 400) return null;
+  if (response.status >= 400) {
+    if (candidate.bucket === "social") {
+      return buildSocialStub(candidate, normalized);
+    }
+    return null;
+  }
 
   const finalUrl = normalizeUrl(response.request?.res?.responseUrl || normalized);
   if (!finalUrl || isGoogleNewsUrl(finalUrl)) return null;
 
-  if (!String(response.headers["content-type"] || "").includes("text/html")) {
+  const contentType = String(response.headers["content-type"] || "");
+  if (!contentType.includes("text/html")) {
+    if (candidate.bucket === "social") {
+      return buildSocialStub(candidate, finalUrl);
+    }
     return null;
   }
 
@@ -400,8 +559,28 @@ async function fetchAndExtractArticle(candidate) {
     cleanText(candidate.title) ||
     "Untitled";
 
-  const fullText = cleanText(parsed?.textContent) || fallbackParagraphText($);
-  if (!fullText || fullText.length < 500) return null;
+  let fullText = cleanText(parsed?.textContent) || fallbackParagraphText($);
+  let finalText = fullText;
+
+  if (candidate.bucket === "social") {
+    const socialDescription = extractSocialDescription($);
+    let redditText = "";
+    if (isRedditUrl(finalUrl)) {
+      redditText = await fetchRedditJsonText(finalUrl);
+    }
+
+    if (!finalText || finalText.length < 120) {
+      const combined = cleanText(
+        [redditText, socialDescription].filter(Boolean).join("\\n\\n")
+      );
+      if (combined) finalText = combined;
+    } else if (socialDescription && !finalText.includes(socialDescription)) {
+      finalText = cleanText([finalText, socialDescription].join("\\n\\n"));
+    }
+  }
+
+  const minLength = candidate.bucket === "social" ? 20 : 500;
+  if (!finalText || finalText.length < minLength) return null;
 
   const article = {
     title,
@@ -409,7 +588,7 @@ async function fetchAndExtractArticle(candidate) {
     author: extractAuthor($),
     published_date: cleanText(candidate.published_date) || extractPublishedDate($),
     original_url: finalUrl,
-    full_text: fullText,
+    full_text: finalText,
     bucket: candidate.bucket,
   };
 
@@ -456,6 +635,8 @@ function enforceQuotas(articles) {
 
   pick((a) => a.bucket === "news", 5);
 
+  pick((a) => a.bucket === "social", 3);
+
   const independentDomains = new Set(selected.map((a) => a.source));
   for (const article of articles) {
     if (selected.length >= 40) break;
@@ -492,6 +673,21 @@ async function collectResearchDataset(query) {
 
   const candidates = await gatherCandidates(query);
   const extracted = await extractArticles(candidates);
+
+  let addedSocial = 0;
+  const seenExtracted = new Set(extracted.map((article) => normalizeUrl(article.original_url)));
+  for (const candidate of candidates) {
+    if (addedSocial >= 8) break;
+    if (candidate.bucket !== "social") continue;
+    const normalizedUrl = normalizeUrl(candidate.url);
+    if (!normalizedUrl || seenExtracted.has(normalizedUrl)) continue;
+    const stub = buildSocialStub(candidate, normalizedUrl);
+    if (!stub) continue;
+    extracted.push(stub);
+    seenExtracted.add(normalizedUrl);
+    addedSocial += 1;
+  }
+
   const selected = enforceQuotas(extracted).map(({ bucket, ...rest }) => rest);
 
   return {
@@ -510,3 +706,32 @@ module.exports = {
   normalizeUrl,
   cleanText,
 };
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

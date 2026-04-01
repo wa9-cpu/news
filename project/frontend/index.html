@@ -1,4 +1,4 @@
-﻿<!doctype html>
+<!doctype html>
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
@@ -21,7 +21,7 @@
     <meta property="og:image" content="/logo.svg" />
     <meta property="og:url" content="https://example.com" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
-    <link rel="stylesheet" href="styles.css" />
+    <link rel="stylesheet" href="styles.css?v=20260308" />
   </head>
   <body class="pre-search">
     <div id="reading-progress" class="reading-progress" aria-hidden="true">
@@ -38,6 +38,9 @@
         <a href="#about" class="nav-link">About</a>
         <a href="#how-it-works" class="nav-link">How It Works</a>
       </nav>
+      <button id="theme-toggle" class="theme-toggle" type="button" aria-pressed="false">
+        Dark mode
+      </button>
     </header>
 
     <main class="app-main">
@@ -69,6 +72,7 @@
             </form>
             <div id="loading-line" class="loading-line" aria-hidden="true"></div>
           </div>
+          <p id="search-helper" class="search-helper">Type a detailed question and press Enter.</p>
 
           <div class="hero-actions">
             <button id="sources-toggle" class="sources-toggle" type="button">SOURCES</button>
@@ -81,6 +85,14 @@
         <section id="results" class="results">
           <article class="panel summary-panel" id="article-root">
             <h2>Master Summary</h2>
+
+            <section class="chat-thread" aria-label="Conversation">
+              <article class="chat-message user-message">
+                <h3>You asked</h3>
+                <p id="query-pill" class="query-pill">No query yet.</p>
+              </article>
+            </section>
+
             <div id="summary-content" class="summary-content"></div>
 
             <section class="key-insights" aria-labelledby="key-insights-title">
@@ -139,6 +151,6 @@
 
     <div id="curiosity-popup" class="curiosity-popup" role="status" aria-live="polite"></div>
 
-    <script src="script.js"></script>
+    <script src="script.js?v=20260308"></script>
   </body>
 </html>

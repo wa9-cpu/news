@@ -1,4 +1,4 @@
-﻿const express = require("express");
+const express = require("express");
 const cors = require("cors");
 const helmet = require("helmet");
 const morgan = require("morgan");
@@ -59,6 +59,93 @@ function normalizeMasterSummary(summary) {
   return grouped.join("\n\n");
 }
 
+const SOCIAL_SOURCE_DOMAINS = [
+  "x.com",
+  "twitter.com",
+  "t.co",
+  "reddit.com",
+  "redd.it",
+  "facebook.com",
+  "fb.com",
+  "instagram.com",
+  "instagr.am",
+  "threads.net",
+  "linkedin.com",
+  "tiktok.com",
+  "youtube.com",
+  "youtu.be",
+];
+
+function isSocialLink(url) {
+  if (!url) return false;
+  try {
+    const host = new URL(url).hostname.replace(/^www\./i, "").toLowerCase();
+    return SOCIAL_SOURCE_DOMAINS.some(
+      (domain) => host === domain || host.endsWith(`.${domain}`)
+    );
+  } catch {
+    return false;
+  }
+}
+
+function buildSocialFallbackSources(query) {
+  const encoded = encodeURIComponent(String(query || "").trim());
+  if (!encoded) return [];
+
+  return [
+    {
+      title: `X search results for "${query}"`,
+      source: "x.com",
+      publication_date: "",
+      link: `https://x.com/search?q=${encoded}&src=typed_query`,
+      author: "",
+    },
+    {
+      title: `Reddit search results for "${query}"`,
+      source: "reddit.com",
+      publication_date: "",
+      link: `https://www.reddit.com/search/?q=${encoded}`,
+      author: "",
+    },
+    {
+      title: `Instagram search results for "${query}"`,
+      source: "instagram.com",
+      publication_date: "",
+      link: `https://www.instagram.com/explore/search/keyword/?q=${encoded}`,
+      author: "",
+    },
+    {
+      title: `Threads search results for "${query}"`,
+      source: "threads.net",
+      publication_date: "",
+      link: `https://www.threads.net/search?q=${encoded}`,
+      author: "",
+    },
+    {
+      title: `LinkedIn search results for "${query}"`,
+      source: "linkedin.com",
+      publication_date: "",
+      link: `https://www.linkedin.com/search/results/all/?keywords=${encoded}`,
+      author: "",
+    },
+    {
+      title: `TikTok search results for "${query}"`,
+      source: "tiktok.com",
+      publication_date: "",
+      link: `https://www.tiktok.com/search?q=${encoded}`,
+      author: "",
+    },
+    {
+      title: `Facebook search results for "${query}"`,
+      source: "facebook.com",
+      publication_date: "",
+      link: `https://www.facebook.com/search/top/?q=${encoded}`,
+      author: "",
+    },
+  ];
+}
+
+
 async function runPipeline(query) {
   const dataset = await collectResearchDataset(query);
   const uniqueArticles = deduplicateArticles(dataset.articles || []);
@@ -89,6 +176,11 @@ async function runPipeline(query) {
     author: article.author || "",
   }));
 
+  const existing = new Set(sources.map((src) => src.link));
+  const fallbackSocial = buildSocialFallbackSources(query);
+  fallbackSocial.forEach((entry) => {
+    if (!existing.has(entry.link)) sources.push(entry);
+  });
   return {
     query,
     master_summary: masterSummary,
@@ -190,3 +282,11 @@ app.listen(config.PORT, "0.0.0.0", () => {
   // eslint-disable-next-line no-console
   console.log(`Backend running on http://0.0.0.0:${config.PORT}`);
 });
+
+
+
+
+
+
+
+

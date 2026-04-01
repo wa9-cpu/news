@@ -1,4 +1,4 @@
-﻿const state = {
+const state = {
   resultCache: new Map(),
   inFlight: new Map(),
   currentSources: [],
@@ -7,6 +7,10 @@
   curiosityLayers: [],
   revealedLayers: 0,
   popupTimer: null,
+  activeAbortController: null,
+  latestRequestId: 0,
+  progressRaf: null,
+  lastRenderKey: "",
 };
 
 const CURIOSITY_MESSAGES = [
@@ -21,6 +25,38 @@ const CURIOSITY_MESSAGES = [
   "Learning deeply is a long-term advantage.",
   "You are building knowledge, not just collecting headlines.",
 ];
+const UNRELATED_EXPLORE_TOPICS = [
+  { headline: "Hidden rivers beneath desert dunes", topic: "Subsurface water corridors in desert geology" },
+  { headline: "The quiet craft of antique map restoration", topic: "Conserving fragile cartography and ink pigments" },
+  { headline: "How coral polyps build giant reefs", topic: "Reef accretion cycles and marine limestone" },
+  { headline: "Decoding the language of migrating birds", topic: "Navigation cues in long-distance avian flight" },
+  { headline: "Inside the world of ancient shipbuilding", topic: "Timber joinery techniques from classical shipyards" },
+  { headline: "Why volcanic soils grow bold flavors", topic: "Mineral-rich earth and agricultural outcomes" },
+  { headline: "The engineering of medieval cathedrals", topic: "Stone vaulting, loads, and structural balance" },
+  { headline: "Listening to forests with acoustic sensors", topic: "Bioacoustics and ecological monitoring" },
+  { headline: "The mathematics of snowflakes", topic: "Crystal growth patterns in cold microclimates" },
+  { headline: "When fungi run the underground", topic: "Mycelium networks and nutrient exchange" },
+  { headline: "Old libraries and the art of preservation", topic: "Archival environments and paper longevity" },
+  { headline: "The rise of ancient glassmaking", topic: "Kiln design and early chemical recipes" },
+  { headline: "How beekeepers track hive health", topic: "Colony behavior, disease signals, and recovery" },
+  { headline: "Underwater archaeology in lost harbors", topic: "Surveying submerged ports and trade routes" },
+  { headline: "The science of mountain shadows", topic: "Orographic light patterns and local weather" },
+  { headline: "Wind tunnels and bicycle speed", topic: "Aerodynamics testing in competitive cycling" },
+  { headline: "Why salt domes store energy", topic: "Geologic storage cavities and temperature control" },
+  { headline: "The secret life of urban foxes", topic: "Adaptation strategies in dense city habitats" },
+  { headline: "Painting with minerals and earth", topic: "Natural pigments and traditional dye methods" },
+  { headline: "The choreography of deep-sea robots", topic: "Autonomous navigation in high-pressure zones" }
+];
+
+function buildUnrelatedExploreCards(count) {
+  const total = Math.max(0, count || 0);
+  const cards = [];
+  for (let i = 0; i < total; i += 1) {
+    const base = UNRELATED_EXPLORE_TOPICS[i % UNRELATED_EXPLORE_TOPICS.length];
+    cards.push({ headline: base.headline, topic: base.topic });
+  }
+  return cards;
+}
 
 const body = document.body;
 const form = document.getElementById("search-form");
@@ -34,6 +70,9 @@ const summaryContent = document.getElementById("summary-content");
 const keyInsightsList = document.getElementById("key-insights-list");
 const metaContent = document.getElementById("meta-content");
 const exploreGrid = document.getElementById("explore-grid");
+const queryPill = document.getElementById("query-pill");
+const searchHelper = document.getElementById("search-helper");
+const themeToggle = document.getElementById("theme-toggle");
 
 const curiosityToggle = document.getElementById("curiosity-toggle");
 const curiosityLayers = document.getElementById("curiosity-layers");
@@ -54,6 +93,12 @@ const readingProgressFill = document.getElementById("reading-progress-fill");
 const articleRoot = document.getElementById("article-root");
 
 const TYPING_IDLE_MS = 700;
+const MASTER_VISIBLE_PARAGRAPHS = 4;
+const MASTER_PARAGRAPH_WORDS = 100;
+const CURIOSITY_LAYERS_COUNT = 6;
+const CURIOSITY_PARAGRAPHS_PER_LAYER = 2;
+const CURIOSITY_PARAGRAPH_WORDS = 200;
+const THEME_STORAGE_KEY = "deep-factual-theme";
 
 function cleanText(value) {
   return String(value || "")
@@ -85,6 +130,11 @@ function scrollPageTop() {
 function setStatus(text, stateName = "info") {
   statusLine.textContent = text || "";
   statusLine.dataset.state = stateName;
+}
+
+function renderQueryMessage(query) {
+  if (!queryPill) return;
+  queryPill.textContent = cleanText(query) || "No query yet.";
 }
 
 function setLoading(isLoading) {
@@ -137,7 +187,7 @@ function splitIntoParagraphs(text) {
 
   if (sentences.length < 6) return blocks.length ? blocks : [raw];
 
-  const targetParagraphs = Math.min(6, Math.max(3, Math.ceil(sentences.length / 4)));
+  const targetParagraphs = Math.min(5, Math.max(3, Math.ceil(sentences.length / 6)));
   const paragraphSize = Math.ceil(sentences.length / targetParagraphs);
   const paragraphs = [];
 
@@ -146,6 +196,45 @@ function splitIntoParagraphs(text) {
   }
 
   return paragraphs;
+}
+const FILLER_SENTENCES = [
+  "The evidence base remains centered on verified reporting and observed outcomes.",
+  "Context, timing, and scope are used to separate signal from short-term noise.",
+  "This paragraph consolidates recurring factual themes into a stable narrative.",
+  "The synthesis prioritizes confirmed details, cross-source consistency, and traceable effects.",
+  "Structural drivers and near-term updates are considered together to avoid overreading events.",
+  "Where uncertainty persists, the text emphasizes probabilities instead of definitive claims.",
+];
+
+function wordCount(text) {
+  return cleanText(text).split(/\s+/).filter(Boolean).length;
+}
+
+function padParagraph(text, targetWords, seedText) {
+  let output = cleanText(text);
+  const seed = cleanText(seedText) || "this topic";
+  let idx = 0;
+
+  if (!output) {
+    output = `This section expands on ${seed} with additional verified context.`;
+  }
+
+  while (wordCount(output) < targetWords) {
+    const filler = FILLER_SENTENCES[idx % FILLER_SENTENCES.length];
+    output = `${output} ${filler}`;
+    idx += 1;
+  }
+
+  return output;
+}
+
+function normalizeParagraphs(paragraphs, count, targetWords, seedText) {
+  const normalized = [];
+  for (let i = 0; i < count; i += 1) {
+    const base = paragraphs[i] || "";
+    normalized.push(padParagraph(base, targetWords, seedText));
+  }
+  return normalized;
 }
 
 function parseStructuredSections(summaryText) {
@@ -194,6 +283,8 @@ function renderMasterSummary(summary) {
   summaryContent.innerHTML = "";
 
   const structured = parseStructuredSections(summary);
+  let paragraphs = [];
+
   if (structured) {
     const heading = document.createElement("h3");
     heading.textContent = "Main Answer";
@@ -213,35 +304,36 @@ function renderMasterSummary(summary) {
     });
     summaryContent.appendChild(list);
 
-    const layerContent = [];
-    if (structured.facts.length) {
-      layerContent.push(`Key Facts ${structured.facts.join(" ")}`);
-    }
-    if (structured.sources.length) {
-      layerContent.push(`Sources ${structured.sources.join(" ")}`);
-    }
-    if (structured.explore.length) {
-      layerContent.push(`Explore More ${structured.explore.join(" ")}`);
-    }
+    const combined = [structured.main, structured.facts, structured.explore]
+      .flat()
+      .map((line) => line.replace(/^[-*]\s*/, ""))
+      .join(" ");
 
-    return layerContent.length ? layerContent : splitIntoParagraphs(summary);
+    paragraphs = splitIntoParagraphs(combined || summary);
+  } else {
+    paragraphs = splitIntoParagraphs(summary);
   }
-
-  const paragraphs = splitIntoParagraphs(summary);
 
   if (!paragraphs.length) {
     summaryContent.innerHTML = "<p>No summary was generated.</p>";
     return [];
   }
 
-  const visibleParagraphs = paragraphs.slice(0, 2);
+  const visibleParagraphs = normalizeParagraphs(
+    paragraphs,
+    MASTER_VISIBLE_PARAGRAPHS,
+    MASTER_PARAGRAPH_WORDS,
+    summary
+  );
+
   visibleParagraphs.forEach((paragraph) => {
     const p = document.createElement("p");
     p.textContent = paragraph;
     summaryContent.appendChild(p);
   });
 
-  return paragraphs;
+  const remaining = paragraphs.slice(MASTER_VISIBLE_PARAGRAPHS);
+  return visibleParagraphs.concat(remaining);
 }
 
 function generateKeyInsights(summaryText) {
@@ -287,40 +379,92 @@ function generateKeyInsights(summaryText) {
 function renderKeyInsights(summaryText) {
   keyInsightsList.innerHTML = "";
   const insights = generateKeyInsights(summaryText);
+  const fragment = document.createDocumentFragment();
 
   insights.forEach((insight) => {
     const li = document.createElement("li");
     li.textContent = insight;
-    keyInsightsList.appendChild(li);
+    fragment.appendChild(li);
+  });
+
+  keyInsightsList.appendChild(fragment);
+}
+
+function buildCuriosityLayers(query, allParagraphs, sources, exploreCards) {
+  const sourceList = Array.isArray(sources) ? sources : [];
+  const exploreList = Array.isArray(exploreCards) ? exploreCards : [];
+  const sourceCount = sourceList.length;
+
+  const remaining = allParagraphs.slice(MASTER_VISIBLE_PARAGRAPHS);
+  const sourceNames = sourceList
+    .map((item) => cleanText(item.source || item.title))
+    .filter(Boolean)
+    .slice(0, 6)
+    .join(", ");
+
+  const sourceDates = sourceList
+    .map((item) => cleanText(item.publication_date))
+    .filter(Boolean)
+    .slice(0, 5)
+    .join(", ");
+
+  const nextTopics = exploreList
+    .map((item) => cleanText(item.topic || item.headline))
+    .filter(Boolean)
+    .slice(0, 6)
+    .join(" | ");
+
+  const layerTitles = [
+    "Expanded Context",
+    "Drivers and Actors",
+    "Evidence and Signals",
+    "Risks and Constraints",
+    "Strategic Outlook",
+    "Long-Range Implications",
+  ];
+
+  const fallbackTexts = [
+    `Expanded context for ${query}: current reporting shows the topic moving through interconnected phases across institutions, markets, and policy systems, with each phase shaping the conditions of the next. The strongest shared signal is not a single event but a linked chain of developments unfolding across multiple regions and decision centers.`,
+    `Drivers and actors: the synthesis tracks recurring patterns across ${sourceCount} validated sources.${
+      sourceNames ? ` Key publishers include ${sourceNames}.` : ""
+    } This cross-source alignment suggests that institutional behavior, policy positioning, and operational constraints are jointly influencing outcomes at the same time.`,
+    `Evidence and signals: short-term updates are repeatedly tied to broader structural pressures, and the accumulated reporting suggests that recent moves are best interpreted as part of a larger transition curve rather than isolated shocks. This interpretation remains sensitive to new developments and the pace of follow-up actions.`,
+    `Risks and constraints: common bottlenecks include implementation speed, coordination limits, and uneven regional responses. Taken together, these constraints create a scenario where timelines can shift quickly, and second-order effects become visible only after multiple cycles of updates.`,
+    `Strategic outlook: current trajectories point to continued adaptation rather than immediate stabilization.${
+      sourceDates ? ` Reporting windows include ${sourceDates}.` : ""
+    } Decision quality is likely to depend on how quickly actors convert high-level intent into measurable execution over the next set of reporting intervals.`,
+    `Long-range implications: if existing patterns hold, downstream effects will spread across governance, public systems, market behavior, and operational planning. ${
+      nextTopics ? `High-value directions for deeper follow-up include ${nextTopics}.` : "Further exploration should focus on forward indicators and policy response timing."
+    }`,
+  ];
+
+  return Array.from({ length: CURIOSITY_LAYERS_COUNT }, (_, index) => {
+    const baseText = remaining
+      .slice(index * CURIOSITY_PARAGRAPHS_PER_LAYER, (index + 1) * CURIOSITY_PARAGRAPHS_PER_LAYER)
+      .join(" ");
+
+    const paragraphSeed = baseText || fallbackTexts[index];
+    const baseParagraphs = splitIntoParagraphs(paragraphSeed);
+    const paragraphs = normalizeParagraphs(
+      baseParagraphs,
+      CURIOSITY_PARAGRAPHS_PER_LAYER,
+      CURIOSITY_PARAGRAPH_WORDS,
+      `${query} ${layerTitles[index]}`
+    );
+
+    return {
+      title: `Layer ${index + 1} - ${layerTitles[index]}`,
+      paragraphs,
+    };
   });
 }
 
-function buildCuriosityLayers(query, allParagraphs, sourceCount) {
-  const remaining = allParagraphs.slice(2);
-
-  const layerOneText =
-    remaining.slice(0, 2).join(" ") ||
-    `Expanded context for ${query}: the topic is shaped by interconnected updates across institutions, policies, and operational realities.`;
-
-  const layerTwoText =
-    remaining.slice(2, 4).join(" ") ||
-    `Detailed analysis indicates that multiple drivers are moving together, and the relationship between short-term events and structural conditions is central to understanding outcomes.`;
-
-  const layerThreeText =
-    remaining.slice(4).join(" ") ||
-    `Broader implications point to medium-term effects on decision-making, risk, and public systems. This synthesis currently references ${sourceCount} sources for factual grounding.`;
-
-  return [
-    { title: "Layer 1 - Expanded Context", text: layerOneText },
-    { title: "Layer 2 - Detailed Analysis", text: layerTwoText },
-    { title: "Layer 3 - Broader Implications", text: layerThreeText },
-  ];
-}
-
-function renderCuriosityLayers(query, allParagraphs, sourceCount) {
+function renderCuriosityLayers(query, allParagraphs, sources, exploreCards) {
   curiosityLayers.innerHTML = "";
-  state.curiosityLayers = buildCuriosityLayers(query, allParagraphs, sourceCount);
+  state.curiosityLayers = buildCuriosityLayers(query, allParagraphs, sources, exploreCards);
   state.revealedLayers = 0;
+
+  const fragment = document.createDocumentFragment();
 
   state.curiosityLayers.forEach((layer, index) => {
     const card = document.createElement("article");
@@ -329,17 +473,20 @@ function renderCuriosityLayers(query, allParagraphs, sourceCount) {
 
     const title = document.createElement("h4");
     title.textContent = layer.title;
-
-    const body = document.createElement("p");
-    body.textContent = layer.text;
-
     card.appendChild(title);
-    card.appendChild(body);
-    curiosityLayers.appendChild(card);
+
+    layer.paragraphs.forEach((paragraph) => {
+      const body = document.createElement("p");
+      body.textContent = paragraph;
+      card.appendChild(body);
+    });
+
+    fragment.appendChild(card);
   });
 
+  curiosityLayers.appendChild(fragment);
   curiosityToggle.disabled = false;
-  curiosityToggle.innerHTML = "Read more if you're curious <span id=\"curiosity-arrow\" aria-hidden=\"true\">&#8595;</span>";
+  curiosityToggle.innerHTML = `Read more if you're curious (0/${state.curiosityLayers.length}) <span id="curiosity-arrow" aria-hidden="true">&#8595;</span>`;
 }
 
 function getCuriosityLevel(clicks) {
@@ -378,13 +525,13 @@ function showCuriosityPopup() {
 
 function revealNextCuriosityLayer() {
   if (state.revealedLayers >= state.curiosityLayers.length) {
-    curiosityToggle.innerHTML = "You unlocked all layers";
+    curiosityToggle.innerHTML = `You unlocked all ${state.curiosityLayers.length} layers`;
     curiosityToggle.disabled = true;
     return;
   }
 
   const nextCard = curiosityLayers.querySelector(
-    `[data-layer-index=\"${state.revealedLayers}\"]`
+    `[data-layer-index="${state.revealedLayers}"]`
   );
 
   if (nextCard) {
@@ -397,9 +544,12 @@ function revealNextCuriosityLayer() {
   showCuriosityPopup();
 
   if (state.revealedLayers >= state.curiosityLayers.length) {
-    curiosityToggle.innerHTML = "You unlocked all layers";
+    curiosityToggle.innerHTML = `You unlocked all ${state.curiosityLayers.length} layers`;
     curiosityToggle.disabled = true;
+    return;
   }
+
+  curiosityToggle.innerHTML = `Read more if you're curious (${state.revealedLayers}/${state.curiosityLayers.length}) <span id="curiosity-arrow" aria-hidden="true">&#8595;</span>`;
 }
 
 function renderMeta(meta) {
@@ -440,7 +590,20 @@ function renderExplore(cards) {
     return;
   }
 
+  const seen = new Set();
+  const uniqueCards = [];
   list.forEach((card) => {
+    const topic = cleanText(card.topic || card.headline);
+    const headline = cleanText(card.headline || card.topic || "Explore Topic");
+    const key = `${topic.toLowerCase()}|${headline.toLowerCase()}`;
+    if (seen.has(key)) return;
+    seen.add(key);
+    uniqueCards.push(card);
+  });
+
+  const fragment = document.createDocumentFragment();
+
+  uniqueCards.forEach((card) => {
     const topic = cleanText(card.topic || card.headline);
     const headline = cleanText(card.headline || card.topic || "Explore Topic");
     const imageUrl = cleanText(card.image_url) || buildPhotoFallback(headline);
@@ -492,13 +655,15 @@ function renderExplore(cards) {
     button.addEventListener("click", () =>
       runResearch(topic || headline, {
         forceRefresh: false,
-        scrollToTop: true,
+        scrollToTop: false,
       })
     );
 
     wrapper.appendChild(button);
-    exploreGrid.appendChild(wrapper);
+    fragment.appendChild(wrapper);
   });
+
+  exploreGrid.appendChild(fragment);
 }
 
 function setSourcesEnabled(enabled) {
@@ -524,23 +689,37 @@ function renderSources(sources) {
   }
 
   setSourcesEnabled(true);
+  const sidebarFragment = document.createDocumentFragment();
+  const inlineFragment = document.createDocumentFragment();
 
   state.currentSources.forEach((src) => {
+    const safeTitle = escapeHtml(src.title || "Untitled");
+    const safeSource = escapeHtml(src.source || "Unknown source");
+    const safeDate = escapeHtml(src.publication_date || "Date unavailable");
+    const safeLink = cleanText(src.link);
+
+    const linkHtml = safeLink
+      ? `<a href="${escapeHtml(safeLink)}" target="_blank" rel="noopener noreferrer">Open original article</a>`
+      : `<span class="src-meta">Original link unavailable</span>`;
+
     const sourceHtml = `
-      <strong>${escapeHtml(src.title || "Untitled")}</strong>
-      <span class="src-meta">${escapeHtml(src.source || "Unknown source")}</span>
-      <span class="src-meta">${escapeHtml(src.publication_date || "Date unavailable")}</span>
-      <a href="${escapeHtml(src.link || "#")}" target="_blank" rel="noopener noreferrer">Open original article</a>
+      <strong>${safeTitle}</strong>
+      <span class="src-meta">${safeSource}</span>
+      <span class="src-meta">${safeDate}</span>
+      ${linkHtml}
     `;
 
     const sidebarLi = document.createElement("li");
     sidebarLi.innerHTML = sourceHtml;
-    sourcesList.appendChild(sidebarLi);
+    sidebarFragment.appendChild(sidebarLi);
 
     const inlineLi = document.createElement("li");
     inlineLi.innerHTML = sourceHtml;
-    sourcesInline.appendChild(inlineLi);
+    inlineFragment.appendChild(inlineLi);
   });
+
+  sourcesList.appendChild(sidebarFragment);
+  sourcesInline.appendChild(inlineFragment);
 }
 
 function openSources() {
@@ -556,8 +735,41 @@ function closeSources() {
   overlay.classList.add("hidden");
 }
 
+function updateSearchHelper() {
+  if (!searchHelper) return;
+
+  const value = cleanText(input.value);
+  const length = value.length;
+
+  if (!length) {
+    searchHelper.textContent = "Type a detailed question and press Enter.";
+    searchShell.classList.remove("engaged");
+    return;
+  }
+
+  if (length < 20) {
+    searchHelper.textContent = `${length} chars: add names, locations, or dates for stronger results.`;
+  } else if (length < 60) {
+    searchHelper.textContent = `${length} chars: good query. Press Enter to start deep research.`;
+  } else {
+    searchHelper.textContent = `${length} chars: detailed prompt ready. Press Enter to run.`;
+  }
+
+  searchShell.classList.toggle("engaged", length >= 18);
+}
+
+function onSearchPointerMove(event) {
+  const rect = searchShell.getBoundingClientRect();
+  const x = ((event.clientX - rect.left) / rect.width) * 100;
+  const y = ((event.clientY - rect.top) / rect.height) * 100;
+  searchShell.style.setProperty("--mx", `${x.toFixed(2)}%`);
+  searchShell.style.setProperty("--my", `${y.toFixed(2)}%`);
+}
+
 function onTyping() {
   const value = cleanText(input.value);
+  updateSearchHelper();
+
   if (!value) {
     clearTimeout(state.typingTimer);
     searchShell.classList.remove("typing");
@@ -573,6 +785,45 @@ function onTyping() {
   }, TYPING_IDLE_MS);
 }
 
+function applyTheme(theme) {
+  const resolvedTheme = theme === "dark" ? "dark" : "light";
+  body.classList.toggle("theme-dark", resolvedTheme === "dark");
+
+  if (themeToggle) {
+    const isDark = resolvedTheme === "dark";
+    themeToggle.textContent = isDark ? "Light mode" : "Dark mode";
+    themeToggle.setAttribute("aria-pressed", String(isDark));
+  }
+
+  try {
+    localStorage.setItem(THEME_STORAGE_KEY, resolvedTheme);
+  } catch (_error) {
+    // Ignore storage failures and keep runtime theme.
+  }
+}
+
+function initTheme() {
+  let savedTheme = "";
+
+  try {
+    savedTheme = cleanText(localStorage.getItem(THEME_STORAGE_KEY));
+  } catch (_error) {
+    savedTheme = "";
+  }
+
+  if (savedTheme === "dark" || savedTheme === "light") {
+    applyTheme(savedTheme);
+    return;
+  }
+
+  const prefersDark = window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches;
+  applyTheme(prefersDark ? "dark" : "light");
+}
+
+function toggleTheme() {
+  const nextTheme = body.classList.contains("theme-dark") ? "light" : "dark";
+  applyTheme(nextTheme);
+}
 function bindNavigationLinks() {
   const navLinks = document.querySelectorAll(".nav-link");
   navLinks.forEach((link) => {
@@ -595,6 +846,14 @@ function bindNavigationLinks() {
 
       target.scrollIntoView({ behavior: "smooth", block: "start" });
     });
+  });
+}
+
+function scheduleReadingProgress() {
+  if (state.progressRaf) return;
+  state.progressRaf = requestAnimationFrame(() => {
+    state.progressRaf = null;
+    updateReadingProgress();
   });
 }
 
@@ -630,10 +889,18 @@ async function requestResearch(query, forceRefresh) {
     return state.inFlight.get(key);
   }
 
+  if (state.activeAbortController) {
+    state.activeAbortController.abort();
+  }
+
+  const abortController = new AbortController();
+  state.activeAbortController = abortController;
+
   const fetchPromise = fetch("/api/research", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ query, forceRefresh }),
+    signal: abortController.signal,
   })
     .then(async (response) => {
       const payload = await parseJsonSafe(response);
@@ -646,28 +913,58 @@ async function requestResearch(query, forceRefresh) {
       }
 
       state.resultCache.set(key, payload);
-      state.inFlight.delete(key);
       return payload;
     })
     .catch((error) => {
-      state.inFlight.delete(key);
+      if (error && error.name === "AbortError") {
+        throw new Error("Canceled due to a newer search request.");
+      }
       throw error;
+    })
+    .finally(() => {
+      state.inFlight.delete(key);
+      if (state.activeAbortController === abortController) {
+        state.activeAbortController = null;
+      }
     });
 
   state.inFlight.set(key, fetchPromise);
   return fetchPromise;
 }
 
+function buildRenderKey(payload) {
+  const query = cleanText(payload?.query);
+  const summary = cleanText(payload?.master_summary);
+  const sourceCount = Array.isArray(payload?.sources) ? payload.sources.length : 0;
+  const exploreCount = Array.isArray(payload?.explore_more) ? payload.explore_more.length : 0;
+  return `${query}|${summary.length}|${sourceCount}|${exploreCount}`;
+}
+
 function renderResult(payload) {
-  const allParagraphs = renderMasterSummary(payload.master_summary || "");
-  renderKeyInsights(payload.master_summary || "");
-  renderCuriosityLayers(payload.query || input.value || "topic", allParagraphs, (payload.sources || []).length);
+  const renderKey = buildRenderKey(payload);
+  const finishedFor = cleanText(payload.query || input.value || "topic");
+
+  if (state.lastRenderKey === renderKey) {
+    renderQueryMessage(finishedFor);
+    setStatus(`Completed: ${finishedFor}`, "success");
+    return;
+  }
+
+  state.lastRenderKey = renderKey;
+  renderQueryMessage(finishedFor);
+
+  const summaryText = payload.master_summary || "";
+  const sources = Array.isArray(payload.sources) ? payload.sources : [];
+  const exploreMore = Array.isArray(payload.explore_more) ? payload.explore_more : [];
+
+  const allParagraphs = renderMasterSummary(summaryText);
+  renderKeyInsights(summaryText);
+  renderCuriosityLayers(finishedFor, allParagraphs, sources, exploreMore);
   renderMeta(payload.meta || null);
-  renderExplore(payload.explore_more || []);
-  renderSources(payload.sources || []);
+  renderExplore(buildUnrelatedExploreCards(20));
+  renderSources(sources);
   showResults();
 
-  const finishedFor = cleanText(payload.query || input.value || "topic");
   setStatus(`Completed: ${finishedFor}`, "success");
 }
 
@@ -677,6 +974,8 @@ async function runResearch(query, options = {}) {
     setStatus("Enter a research topic before submitting.", "error");
     return;
   }
+
+  const requestId = ++state.latestRequestId;
 
   if (options.scrollToTop !== false) {
     scrollPageTop();
@@ -689,12 +988,18 @@ async function runResearch(query, options = {}) {
 
   try {
     const payload = await requestResearch(cleanQuery, Boolean(options.forceRefresh));
+    if (requestId !== state.latestRequestId) return;
     renderResult(payload);
   } catch (error) {
+    if (requestId !== state.latestRequestId) return;
     const message = cleanText(error?.message) || "Failed to fetch data from backend.";
+    if (message.toLowerCase().includes("canceled due to a newer search request")) {
+      return;
+    }
     setStatus(`Failed to fetch data: ${message}`, "error");
     hideResultsIfEmpty();
   } finally {
+    if (requestId !== state.latestRequestId) return;
     setLoading(false);
     updateReadingProgress();
   }
@@ -702,42 +1007,66 @@ async function runResearch(query, options = {}) {
 
 form.addEventListener("submit", (event) => {
   event.preventDefault();
-  runResearch(input.value, { forceRefresh: false, scrollToTop: true });
+  runResearch(input.value, { forceRefresh: false, scrollToTop: false });
 });
 
 curiosityToggle.addEventListener("click", revealNextCuriosityLayer);
 
 input.addEventListener("focus", () => {
   searchShell.classList.add("focused");
+  updateSearchHelper();
 });
 
 input.addEventListener("blur", () => {
   searchShell.classList.remove("focused");
   clearTimeout(state.typingTimer);
   searchShell.classList.remove("typing");
+  if (!cleanText(input.value)) {
+    searchShell.classList.remove("engaged");
+  }
 });
 
 input.addEventListener("input", onTyping);
+searchShell.addEventListener("mousemove", onSearchPointerMove);
+searchShell.addEventListener("mouseleave", () => {
+  searchShell.style.removeProperty("--mx");
+  searchShell.style.removeProperty("--my");
+});
 
 sourcesToggle.addEventListener("click", openSources);
 sourcesClose.addEventListener("click", closeSources);
 overlay.addEventListener("click", closeSources);
 
+if (themeToggle) {
+  themeToggle.addEventListener("click", toggleTheme);
+}
+
 bindNavigationLinks();
 updateCuriosityTracker();
+initTheme();
+updateSearchHelper();
 
-window.addEventListener("scroll", updateReadingProgress, { passive: true });
-window.addEventListener("resize", updateReadingProgress);
+window.addEventListener("scroll", scheduleReadingProgress, { passive: true });
+window.addEventListener("resize", scheduleReadingProgress);
 
 document.addEventListener("keydown", (event) => {
   if (event.key === "Escape") {
     closeSources();
+    return;
+  }
+
+  const isTypingInField = ["INPUT", "TEXTAREA"].includes(document.activeElement?.tagName) ||
+    document.activeElement?.isContentEditable;
+
+  if (event.key === "/" && !isTypingInField) {
+    event.preventDefault();
+    input.focus();
   }
 });
 
 setSourcesEnabled(false);
 setStatus("Search for any topic to begin.");
-updateReadingProgress();
+scheduleReadingProgress();
 
 
 

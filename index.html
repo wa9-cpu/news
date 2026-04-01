@@ -1,0 +1,159 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Deep Factual Research Engine</title>
+    <meta
+      name="description"
+      content="AI research platform that analyzes full articles and produces factual summaries."
+    />
+    <meta
+      name="keywords"
+      content="AI research, factual summary, multi-source analysis, deep research engine, article synthesis"
+    />
+    <meta property="og:title" content="Deep Factual Research Engine" />
+    <meta
+      property="og:description"
+      content="Ask a research question and get a deep, factual, multi-source master summary."
+    />
+    <meta property="og:type" content="website" />
+    <meta property="og:image" content="/logo.svg" />
+    <meta property="og:url" content="https://example.com" />
+    <meta name="api-base" content="" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <link rel="stylesheet" href="styles.css?v=20260308" />
+  </head>
+  <body class="pre-search">
+    <div id="reading-progress" class="reading-progress" aria-hidden="true">
+      <div id="reading-progress-fill" class="reading-progress-fill"></div>
+    </div>
+
+    <header class="site-header">
+      <div class="brand-wrap">
+        <img src="/logo.svg" alt="Deep Factual Research logo" class="brand-logo" />
+        <span class="brand-name">Deep Factual Research</span>
+      </div>
+      <nav class="top-nav" aria-label="Main">
+        <a href="#" class="nav-link">Home</a>
+        <a href="#about" class="nav-link">About</a>
+        <a href="#how-it-works" class="nav-link">How It Works</a>
+      </nav>
+      <button id="theme-toggle" class="theme-toggle" type="button" aria-pressed="false">
+        Dark mode
+      </button>
+    </header>
+
+    <main class="app-main">
+      <section id="hero-search" class="hero-search" aria-labelledby="hero-title">
+        <div class="hero-inner">
+          <h1 id="hero-title">Deep Factual Research Engine</h1>
+          <p class="hero-subtitle">
+            Ask one question and receive a factual, multi-paragraph synthesis built from full article text.
+          </p>
+
+          <div id="search-shell" class="search-shell" role="search">
+            <form id="search-form" class="search-form">
+              <div class="input-wrap">
+                <span class="search-icon" aria-hidden="true">
+                  <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2">
+                    <circle cx="11" cy="11" r="7"></circle>
+                    <path d="M20 20l-4-4"></path>
+                  </svg>
+                </span>
+                <input
+                  id="query-input"
+                  type="text"
+                  placeholder="Ask a research question&#8230;"
+                  aria-label="Ask a research question"
+                  required
+                />
+              </div>
+              <button id="search-btn" type="submit">Research</button>
+            </form>
+            <div id="loading-line" class="loading-line" aria-hidden="true"></div>
+          </div>
+          <p id="search-helper" class="search-helper">Type a detailed question and press Enter.</p>
+
+          <div class="hero-actions">
+            <button id="sources-toggle" class="sources-toggle" type="button">SOURCES</button>
+            <p id="status-line" class="status-line"></p>
+          </div>
+        </div>
+      </section>
+
+      <section id="results-layout" class="results-layout hidden" aria-live="polite">
+        <section id="results" class="results">
+          <article class="panel summary-panel" id="article-root">
+            <h2>Master Summary</h2>
+
+            <section class="chat-thread" aria-label="Conversation">
+              <article class="chat-message user-message">
+                <h3>You asked</h3>
+                <p id="query-pill" class="query-pill">No query yet.</p>
+              </article>
+            </section>
+
+            <div id="summary-content" class="summary-content"></div>
+
+            <section class="key-insights" aria-labelledby="key-insights-title">
+              <h3 id="key-insights-title">Key Insights</h3>
+              <ul id="key-insights-list" class="key-insights-list"></ul>
+            </section>
+
+            <hr class="curiosity-divider" />
+            <button id="curiosity-toggle" class="curiosity-toggle" type="button">
+              Read more if you're curious 
+
+              <span id="curiosity-arrow" aria-hidden="true">&#8595;</span>
+            </button>
+
+            <section id="curiosity-layers" class="curiosity-layers" aria-live="polite"></section>
+
+            <p id="meta-content" class="meta-content"></p>
+          </article>
+
+          <section class="panel explore-panel" id="about">
+            <h2>Explore Deeper</h2>
+            <div id="explore-grid" class="explore-grid"></div>
+          </section>
+
+          <section class="panel sources-panel">
+            <h2>Sources</h2>
+            <ul id="sources-inline" class="sources-inline"></ul>
+          </section>
+        </section>
+
+        <aside id="curiosity-tracker" class="panel curiosity-tracker" aria-live="polite">
+          <h3>Curiosity Tracker</h3>
+          <p id="curiosity-count" class="curiosity-count">You explored deeper 0 times.</p>
+          <p id="curiosity-level" class="curiosity-level">Level: Explorer</p>
+        </aside>
+      </section>
+
+      <section id="how-it-works" class="how-it-works panel">
+        <h3>How It Works</h3>
+        <p>
+          The system runs a multi-agent pipeline: deep research, deduplication, synthesis, topic expansion,
+          headline generation, and image generation.
+        </p>
+      </section>
+    </main>
+
+    <aside id="sources-sidebar" class="sources-sidebar" aria-hidden="true">
+      <div class="sources-header">
+        <h3>Sources</h3>
+        <button id="sources-close" type="button">Close</button>
+      </div>
+      <ul id="sources-list" class="sources-list"></ul>
+    </aside>
+
+    <div id="overlay" class="overlay hidden"></div>
+
+    <div id="curiosity-popup" class="curiosity-popup" role="status" aria-live="polite"></div>
+
+    <script src="script.js?v=20260308"></script>
+  </body>
+</html>
+
+

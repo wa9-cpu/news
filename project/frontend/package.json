@@ -1,0 +1,14 @@
+{
+  "name": "deep-factual-research-api",
+  "private": true,
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "dependencies": {
+    "@mozilla/readability": "^0.5.0",
+    "axios": "^1.8.4",
+    "cheerio": "^1.0.0",
+    "jsdom": "^26.0.0",
+    "lru-cache": "^11.0.2"
+  }
+}

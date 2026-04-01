@@ -926,7 +926,10 @@ async function requestResearch(query, forceRefresh) {
   const abortController = new AbortController();
   state.activeAbortController = abortController;
 
-  const requestUrl = buildApiUrl("/api/research");`r`n  logApiRequest(requestUrl, { method: "POST" });`r`n`r`n  const fetchPromise = fetch(requestUrl, {
+  const requestUrl = buildApiUrl("/api/research");
+  logApiRequest(requestUrl, { method: "POST" });
+
+  const fetchPromise = fetch(requestUrl, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ query, forceRefresh }),
@@ -934,7 +937,8 @@ async function requestResearch(query, forceRefresh) {
   })
     .then(async (response) => {
       logApiResponse(requestUrl, response.status);
-      const payload = await parseJsonSafe(response);      if (!response.ok) {
+      const payload = await parseJsonSafe(response);
+      if (!response.ok) {
         if (response.status === 404) {
           throw new Error("HTTP 404 (endpoint not found). Check API base URL.");
         }
@@ -964,7 +968,6 @@ async function requestResearch(query, forceRefresh) {
   state.inFlight.set(key, fetchPromise);
   return fetchPromise;
 }
-
 function buildRenderKey(payload) {
   const query = cleanText(payload?.query);
   const summary = cleanText(payload?.master_summary);
@@ -1100,6 +1103,7 @@ document.addEventListener("keydown", (event) => {
 setSourcesEnabled(false);
 setStatus("Search for any topic to begin.");
 scheduleReadingProgress();
+
 
 
 

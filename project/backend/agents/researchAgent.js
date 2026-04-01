@@ -1,4 +1,4 @@
-﻿const axios = require("axios");
+const axios = require("axios");
 const cheerio = require("cheerio");
 const { JSDOM } = require("jsdom");
 const { Readability } = require("@mozilla/readability");
@@ -404,42 +404,7 @@ async function gatherCandidates(query) {
     [news, reports, blogs, ...social].forEach((entry) => {
       if (entry.status === "fulfilled") candidates.push(...entry.value);
     });
-  } else {
-    const socialQueries = [
-      `${query} site:reddit.com`,
-      `${query} site:redd.it`,
-      `${query} site:x.com`,
-      `${query} site:t.co`,
-      `${query} site:twitter.com`,
-      `${query} site:facebook.com`,
-      `${query} site:fb.com`,
-      `${query} site:instagram.com`,
-      `${query} site:instagr.am`,
-      `${query} site:threads.net`,
-      `${query} site:linkedin.com`,
-      `${query} site:tiktok.com`,
-      `${query} site:youtube.com`,
-      `${query} site:youtu.be`,
-    ];
-
-    const fallbackTasks = [
-      bingNewsFallback(query),
-      googleNewsFallback(query),
-      duckDuckGoFallback(`${query} investigation analysis`, "article"),
-      duckDuckGoFallback(`${query} expert blog`, "blog"),
-      ...socialQueries.map((q) => duckDuckGoFallback(q, "social")),
-    ];
-
-    const [bingNews, googleNews, reports, blogs, ...social] = await Promise.allSettled(
-      fallbackTasks
-    );
-
-    [bingNews, googleNews, reports, blogs, ...social].forEach((entry) => {
-      if (entry.status === "fulfilled") candidates.push(...entry.value);
-    });
-  }
-
-  const deduped = [];
+  } else {\r\n    // Serper API key is required; avoid other search providers.\r\n    searchCache.set(key, []);\r\n    return [];\r\n  }\r\n\r\n  const deduped = [];
   const seen = new Set();
 
   for (const row of candidates) {
@@ -706,6 +671,7 @@ module.exports = {
   normalizeUrl,
   cleanText,
 };
+
 
 
 

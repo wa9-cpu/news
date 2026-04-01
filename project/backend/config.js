@@ -57,7 +57,7 @@ const config = {
   NANOBANANA_API_URL:
     env.NANOBANANA_API_URL || "https://api.nanobanana.ai/v1/images/generate",
 
-  SEARCH_API_KEY: env.SEARCH_API_KEY || "INSERT_YOUR_SEARCH_API_KEY_HERE",
+  SEARCH_API_KEY: env.SEARCH_API_KEY || env.SERPER_API_KEY || "INSERT_YOUR_SEARCH_API_KEY_HERE",
   SEARCH_API_PROVIDER: env.SEARCH_API_PROVIDER || "serper",
   SERPER_API_BASE: env.SERPER_API_BASE || "https://google.serper.dev",
 
@@ -71,3 +71,4 @@ const config = {
 };
 
 module.exports = config;
+

@@ -64,48 +64,78 @@ function ensureApiKey(value, label) {
   return value;
 }
 
+function hasApiKey(value) {
+  return Boolean(value && !String(value).includes("INSERT_YOUR"));
+}
+
 async function callOpenAI(messages, options = {}) {
-  const apiKey = ensureApiKey(config.OPENAI_API_KEY, "OPENAI_API_KEY");
-  const response = await axios.post(
-    `${config.OPENAI_BASE_URL}/chat/completions`,
-    {
-      model: config.OPENAI_MODEL,
-      temperature: options.temperature ?? 0.2,
-      max_tokens: options.max_tokens ?? 1200,
-      messages,
-    },
-    {
-      timeout: config.FETCH_TIMEOUT_MS * 2,
-      headers: {
-        Authorization: `Bearer ${apiKey}`,
-        "Content-Type": "application/json",
+  if (!hasApiKey(config.OPENAI_API_KEY)) {
+    console.warn("[Pipeline] OPENAI_API_KEY missing; falling back to OpenRouter.");
+    return callOpenRouter(messages, options);
+  }
+
+  try {
+    const apiKey = ensureApiKey(config.OPENAI_API_KEY, "OPENAI_API_KEY");
+    const response = await axios.post(
+      `${config.OPENAI_BASE_URL}/chat/completions`,
+      {
+        model: config.OPENAI_MODEL,
+        temperature: options.temperature ?? 0.2,
+        max_tokens: options.max_tokens ?? 1200,
+        messages,
       },
-    }
-  );
-  return response.data?.choices?.[0]?.message?.content || "";
+      {
+        timeout: config.FETCH_TIMEOUT_MS * 2,
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+          "Content-Type": "application/json",
+        },
+      }
+    );
+    return response.data?.choices?.[0]?.message?.content || "";
+  } catch (error) {
+    console.warn(
+      "[Pipeline] OpenAI request failed; falling back to OpenRouter:",
+      error?.message || "Unknown error"
+    );
+    return callOpenRouter(messages, options);
+  }
 }
 
 async function callOpenRouter(messages, options = {}) {
-  const apiKey = ensureApiKey(config.OPENROUTER_API_KEY, "OPENROUTER_API_KEY");
-  const response = await axios.post(
-    `${config.OPENROUTER_BASE_URL}/chat/completions`,
-    {
-      model: config.OPENROUTER_MODEL,
-      temperature: options.temperature ?? 0.2,
-      max_tokens: options.max_tokens ?? 1200,
-      messages,
-    },
-    {
-      timeout: config.FETCH_TIMEOUT_MS * 2,
-      headers: {
-        Authorization: `Bearer ${apiKey}`,
-        "Content-Type": "application/json",
-        "HTTP-Referer": config.OPENROUTER_HTTP_REFERER,
-        "X-Title": config.OPENROUTER_APP_TITLE,
+  if (!hasApiKey(config.OPENROUTER_API_KEY)) {
+    console.warn("[Pipeline] OPENROUTER_API_KEY missing; using non-LLM fallback.");
+    return "";
+  }
+
+  try {
+    const apiKey = ensureApiKey(config.OPENROUTER_API_KEY, "OPENROUTER_API_KEY");
+    const response = await axios.post(
+      `${config.OPENROUTER_BASE_URL}/chat/completions`,
+      {
+        model: config.OPENROUTER_MODEL,
+        temperature: options.temperature ?? 0.2,
+        max_tokens: options.max_tokens ?? 1200,
+        messages,
       },
-    }
-  );
-  return response.data?.choices?.[0]?.message?.content || "";
+      {
+        timeout: config.FETCH_TIMEOUT_MS * 2,
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+          "Content-Type": "application/json",
+          "HTTP-Referer": config.OPENROUTER_HTTP_REFERER,
+          "X-Title": config.OPENROUTER_APP_TITLE,
+        },
+      }
+    );
+    return response.data?.choices?.[0]?.message?.content || "";
+  } catch (error) {
+    console.warn(
+      "[Pipeline] OpenRouter request failed; using non-LLM fallback:",
+      error?.message || "Unknown error"
+    );
+    return "";
+  }
 }
 
 function wordCount(text) {

@@ -404,7 +404,13 @@ async function gatherCandidates(query) {
     [news, reports, blogs, ...social].forEach((entry) => {
       if (entry.status === "fulfilled") candidates.push(...entry.value);
     });
-  } else {\r\n    // Serper API key is required; avoid other search providers.\r\n    searchCache.set(key, []);\r\n    return [];\r\n  }\r\n\r\n  const deduped = [];
+  } else {
+    // Serper API key is required; avoid other search providers.
+    searchCache.set(key, []);
+    return [];
+  }
+
+  const deduped = [];
   const seen = new Set();
 
   for (const row of candidates) {

@@ -1,10 +1,10 @@
 const axios = require("axios");
-const config = require("../project/backend/config");
-const { collectResearchDataset, cleanText } = require("../project/backend/agents/researchAgent");
-const { deduplicateArticles } = require("../project/backend/agents/dedupeAgent");
-const { generateExploreTopics } = require("../project/backend/agents/exploreAgent");
-const { generateHeadlines } = require("../project/backend/agents/headlineAgent");
-const { generateImages } = require("../project/backend/agents/imageAgent");
+const config = require("../../backend/config");
+const { collectResearchDataset, cleanText } = require("../../backend/agents/researchAgent");
+const { deduplicateArticles } = require("../../backend/agents/dedupeAgent");
+const { generateExploreTopics } = require("../../backend/agents/exploreAgent");
+const { generateHeadlines } = require("../../backend/agents/headlineAgent");
+const { generateImages } = require("../../backend/agents/imageAgent");
 
 const SOCIAL_SOURCE_DOMAINS = [
   "x.com",

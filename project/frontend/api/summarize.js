@@ -1,5 +1,5 @@
 const { runPipeline, normalizeMasterSummary, cleanText } = require("./_pipeline");
-const { synthesizeMasterSummary } = require("../project/backend/agents/synthesizerAgent");
+const { synthesizeMasterSummary } = require("../../backend/agents/synthesizerAgent");
 
 module.exports = async (req, res) => {
   console.log(`[API] ${req.method} ${req.url}`);
